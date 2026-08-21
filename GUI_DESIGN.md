@@ -89,6 +89,10 @@ Rules from the OptiLab study applied here:
 - Workflow actions remain native push buttons but use owner-drawn numbering,
   grouping, hover, pressed, focus, and current-step states. Their HWNDs,
   accessible names, roles, commands, and tab order do not change.
+- The action row allocates extra width to the longer workflow and Copy Curve
+  Description captions while the short Export/Import actions donate unused
+  space. Full visible captions therefore remain consistent with the native
+  accessible names instead of being abbreviated or ellipsized.
 - The learned band grid is stable. Correction Range Low/High never move or
   renumber band frequencies; they mask the effective correction symmetrically.
   Bands outside either boundary show/announce 0 dB while their learned values
@@ -103,6 +107,9 @@ Rules from the OptiLab study applied here:
   capture, while the host generic Workflow Step keeps the explicit
   **Save Reference and Learn Target** wording. A committed Reference can be
   exported before a Target match is completed.
+- Tooltip registration uses the Windows `TTTOOLINFOW_V2_SIZE` contract. This
+  keeps all eight action/control tooltips available in hosts with either legacy
+  Common Controls or a version 6 manifest.
 - Static labels and readonly dark-panel text use explicit high-contrast colors;
   exact-value boxes retain a light edit background.
 

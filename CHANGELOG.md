@@ -24,5 +24,8 @@ versioning, and release dates use `YYYY-MM-DD`.
   band adjustment, and clearer hover/focus/active visuals.
 - Added numbered, visually grouped workflow buttons without changing their
   native button roles, accessible names, parameter routing, or tab order.
+- Kept every action caption fully visible at the design size and made native
+  tooltips register reliably with both legacy and current Windows Common
+  Controls hosts.
 - Reduced the public release to one ZIP containing the CLAP plug-in,
   documentation, licenses, and an internal build manifest.

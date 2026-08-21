@@ -44,6 +44,9 @@ Removing the copied `.clap` file uninstalls Tone Trace.
 
 - Release x64 compilation with Visual Studio 2022 and the static MSVC runtime.
 - Engine, real-time renderer, UI-layout, state, and mock CLAP-host tests.
+- Native-editor render and mouse-interaction checks across Match and every
+  Bands tab, including complete action captions, hover/focus feedback,
+  tooltips, graph readout tracking, and 1 dB mouse-wheel adjustment.
 - Package-content verification after ZIP creation.
 
 Before publication, complete the real-host checklist in
