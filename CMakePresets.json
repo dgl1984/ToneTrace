@@ -1,0 +1,86 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-release",
+      "displayName": "Windows x64 Release",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build-cmake/windows-x64-release",
+      "cacheVariables": {
+        "CMAKE_SYSTEM_VERSION": "10.0",
+        "BUILD_TESTING": "ON",
+        "TONETRACE_BUILD_TOOLS": "ON",
+        "TONETRACE_BUILD_TESTS": "ON",
+        "TONETRACE_BUILD_PLUGINS": "ON",
+        "TONETRACE_STATIC_MSVC_RUNTIME": "ON"
+      }
+    },
+    {
+      "name": "macos-universal-release",
+      "displayName": "macOS Universal Release",
+      "generator": "Xcode",
+      "binaryDir": "${sourceDir}/build-cmake/macos-universal-release",
+      "cacheVariables": {
+        "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64",
+        "BUILD_TESTING": "ON",
+        "TONETRACE_BUILD_TOOLS": "ON",
+        "TONETRACE_BUILD_TESTS": "ON",
+        "TONETRACE_BUILD_PLUGINS": "ON"
+      }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release Verification",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-cmake/linux-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "ON",
+        "TONETRACE_BUILD_TOOLS": "ON",
+        "TONETRACE_BUILD_TESTS": "ON",
+        "TONETRACE_BUILD_PLUGINS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "macos-universal-release",
+      "configurePreset": "macos-universal-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "macos-universal-release",
+      "configurePreset": "macos-universal-release",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

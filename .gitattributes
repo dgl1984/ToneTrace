@@ -1,0 +1,16 @@
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmake text eol=lf
+*.command text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+
+*.clap binary
+*.dll binary
+*.exe binary
+*.png binary
+*.wav binary
+*.zip binary

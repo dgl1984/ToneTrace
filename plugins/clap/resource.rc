@@ -1,0 +1,14 @@
+#include <windows.h>
+#include "resource.h"
+
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_UK
+
+// The editor is a real DS_CONTROL child dialog so the host dialog manager
+// (REAPER's FX window) recurses into it for Tab navigation and initial
+// focus. All controls are created programmatically in tonetrace_win32_editor.cpp.
+IDD_TONETRACE_EDITOR DIALOGEX 0, 0, 980, 640
+STYLE DS_CONTROL | WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN
+EXSTYLE WS_EX_CONTROLPARENT
+CAPTION "Tone Trace EQ"
+BEGIN
+END

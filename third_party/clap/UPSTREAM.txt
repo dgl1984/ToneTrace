@@ -1,0 +1,9 @@
+CLAP ABI headers
+
+Upstream: https://github.com/free-audio/clap
+Commit: a47f6badb49d948fd009998f28309cdab78979c9
+Header version: 1.2.10
+License: MIT; see LICENSE in this directory.
+
+The complete public include/clap tree is vendored unchanged so Windows builds
+do not depend on network access or a separately installed SDK.

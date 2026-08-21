@@ -1,0 +1,40 @@
+# Build output
+build-cmake/
+build/
+build-*/
+dist/
+graphify-out/
+
+# Platform builder artifacts (generated beside the builders)
+ToneTrace_Windows_last_build.log
+ToneTrace_macOS_last_build.log
+*.sha256
+
+# CMake
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+
+# Compiled artifacts
+*.obj
+*.o
+*.exe
+*.dll
+*.clap
+*.pdb
+*.ilk
+*.lib
+*.exp
+
+# IDE / editor
+.vs/
+.vscode/
+*.user
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Local logs and temporary files
+*.log
+*.tmp
