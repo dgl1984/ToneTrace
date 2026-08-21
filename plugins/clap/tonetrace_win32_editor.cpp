@@ -209,7 +209,10 @@ void addControlTooltip(HWND tooltip, HWND owner, HWND control,
     return;
   }
   TOOLINFOW tool{};
-  tool.cbSize = sizeof(tool);
+  // Hosts without a Common Controls v6 manifest reject the v3 structure size
+  // (which adds lpReserved) and silently register zero tools. V2 contains every
+  // field we use and works with both legacy and current comctl32 versions.
+  tool.cbSize = TTTOOLINFOW_V2_SIZE;
   tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
   tool.hwnd = owner;
   tool.uId = reinterpret_cast<UINT_PTR>(control);
@@ -1523,7 +1526,7 @@ bool ToneTraceWin32Editor::Impl::createChildren() {
       HWND control = GetDlgItem(window_, id);
       if (control == nullptr) return;
       TOOLINFOW tool{};
-      tool.cbSize = sizeof(tool);
+      tool.cbSize = TTTOOLINFOW_V2_SIZE;
       tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
       tool.hwnd = window_;
       tool.uId = reinterpret_cast<UINT_PTR>(control);
@@ -1785,13 +1788,18 @@ void ToneTraceWin32Editor::Impl::layoutChildren() {
   double remainingWeight = 0.0;
   for (int index = 0; index < buttonCount; ++index) {
     const int id = GetDlgCtrlID(workflowButtons_[static_cast<std::size_t>(index)]);
-    // The copy caption is materially longer than the four workflow captions;
-    // Export/Import are much shorter. Give the labels the space they actually
-    // need instead of clipping Copy Curve Description in an equal-width row.
-    if (id == kDescribeId) {
+    // Allocate for the painted caption and the numbered workflow badge. Keep
+    // the full native text visible: it is also the button's accessible name,
+    // so shortening it just for layout would make the visual and spoken UI
+    // disagree. Export/Import donate their unused width to longer actions.
+    if (id == kCaptureReferenceId || id == kFreezeId) {
       buttonWeights[static_cast<std::size_t>(index)] = 1.25;
+    } else if (id == kCorrectTargetId) {
+      buttonWeights[static_cast<std::size_t>(index)] = 1.05;
+    } else if (id == kDescribeId) {
+      buttonWeights[static_cast<std::size_t>(index)] = 1.40;
     } else if (id == kExportId || id == kImportId) {
-      buttonWeights[static_cast<std::size_t>(index)] = 0.85;
+      buttonWeights[static_cast<std::size_t>(index)] = 0.60;
     }
     remainingWeight += buttonWeights[static_cast<std::size_t>(index)];
   }
