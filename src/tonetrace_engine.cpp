@@ -897,6 +897,8 @@ CorrectionModel matchWithDetailScale(const SpectrumCapture& reference,
 }
 
 struct VoiceTailMetrics {
+  double after1Ms = 0.0;
+  double after2Ms = 0.0;
   double after5Ms = 0.0;
   double after10Ms = 0.0;
 };
@@ -952,6 +954,12 @@ VoiceTailMetrics symmetricVoiceTailMetrics(const CorrectionModel& source,
   const auto inverseIr = renderMinimumPhaseIr(inverse, settings);
 
   VoiceTailMetrics result;
+  result.after1Ms = std::max(
+      irTailEnergyFraction(forwardIr, settings.sampleRate, 1.0),
+      irTailEnergyFraction(inverseIr, settings.sampleRate, 1.0));
+  result.after2Ms = std::max(
+      irTailEnergyFraction(forwardIr, settings.sampleRate, 2.0),
+      irTailEnergyFraction(inverseIr, settings.sampleRate, 2.0));
   result.after5Ms = std::max(
       irTailEnergyFraction(forwardIr, settings.sampleRate, 5.0),
       irTailEnergyFraction(inverseIr, settings.sampleRate, 5.0));
@@ -978,9 +986,20 @@ bool voiceCandidateSafe(const CorrectionModel& candidate,
   // this decision sign-symmetric, so swapping Reference/Target chooses the same
   // detail scale and negative Correction Strength remains a true inverse.
   const auto candidateTail = symmetricVoiceTailMetrics(candidate, sampleRate);
+  const double excess1 = std::max(0.0, candidateTail.after1Ms - broadTail->after1Ms);
+  const double excess2 = std::max(0.0, candidateTail.after2Ms - broadTail->after2Ms);
   const double excess5 = std::max(0.0, candidateTail.after5Ms - broadTail->after5Ms);
   const double excess10 = std::max(0.0, candidateTail.after10Ms - broadTail->after10Ms);
-  return excess5 <= 0.0015 && excess10 <= 0.0005;
+
+  // A short, pitched Voice resonance may spend most of its excess energy in
+  // the first few milliseconds and still look harmless at the established
+  // 5/10 ms checkpoints. Apply these early checks only after the original
+  // full-detail curve has already failed the roughness gate above. Benign
+  // full-detail matches therefore remain byte-for-byte unchanged, while a
+  // suspicious curve must also avoid a compact 1-2 ms ring relative to its
+  // own broad tonal baseline.
+  return excess1 <= 0.0006 && excess2 <= 0.0003 &&
+         excess5 <= 0.0015 && excess10 <= 0.0005;
 }
 
 }  // namespace

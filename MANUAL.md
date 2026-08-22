@@ -8,7 +8,7 @@ The unusual part is what happens next. Tone Trace does not treat the generated m
 
 This manual starts with the practical workflow. The more technical details are kept for the sections where they help explain a control or behavior rather than being required knowledge up front.
 
-Current version: **1.0.0**.
+Current version: **1.0.1**.
 
 ## The one distinction to get right
 
@@ -199,7 +199,7 @@ Once a correction has been calculated, **Match Mode becomes a post-capture compa
 
 There is one deliberate limitation: the raw recordings are not stored in the project. A post-capture mode switch therefore reinterprets the retained spectral captures; it does not replay the original audio through a different capture gate. This keeps project state compact and avoids storing recorded audio inside the plug-in.
 
-**Voice mode includes an automatic detail safeguard.** Tone Trace first tries the normal detailed Voice match. If that correction contains unusually dense narrow structure that would create excessive coherent ringing, it progressively reduces only the narrow resonance-restoration detail while preserving the broad tonal match. Normal compact Voice matches are left unchanged. This is automatic; there is no extra mode or safety knob to manage.
+**Voice mode includes an automatic detail safeguard.** Tone Trace first tries the normal detailed Voice match. If that correction would create excessive ringing, it progressively reduces only the narrow resonant detail while preserving the broad tonal match. Normal Voice matches are left unchanged. This is automatic; there is no extra mode or safety control to manage.
 
 ## 7. Main controls
 
@@ -486,7 +486,7 @@ The builder creates a clean Release build, runs the registered tests, stages onl
 ### Other platforms
 
 The source contains macOS universal and Linux CMake verification presets, but
-1.0.0 ships no supported macOS/Linux binary asset or release builder. The custom
+1.0.1 ships no supported macOS/Linux binary asset or release builder. The custom
 accessible editor is Windows-only; non-Windows source builds use the CLAP host's
 parameter interface.
 

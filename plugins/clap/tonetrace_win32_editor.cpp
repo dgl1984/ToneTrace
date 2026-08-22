@@ -1355,8 +1355,12 @@ LRESULT CALLBACK ToneTraceWin32Editor::Impl::bandEditProc(
     setFromMouseY(GET_Y_LPARAM(lParam));
     return 0;
   }
-  if (message == WM_MOUSEMOVE && GetCapture() == hwnd &&
-      (wParam & MK_LBUTTON) != 0) {
+  if (message == WM_MOUSEMOVE && GetCapture() == hwnd) {
+    // Capture is the authoritative drag state. Precision touchpads can promote
+    // a tap-and-drag to mouse messages without preserving MK_LBUTTON on every
+    // synthesized WM_MOUSEMOVE; requiring that legacy flag makes the fader
+    // appear to grab and then refuse to move. WM_LBUTTONUP (or focus/capture
+    // loss) still terminates the drag, so accepting captured moves is bounded.
     setFromMouseY(GET_Y_LPARAM(lParam));
     return 0;
   }

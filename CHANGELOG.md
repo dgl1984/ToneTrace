@@ -3,6 +3,16 @@
 All notable Tone Trace EQ changes are recorded here. Versions follow semantic
 versioning, and release dates use `YYYY-MM-DD`.
 
+## [1.0.1] - 2026-08-21
+
+### Fixed
+
+- Fixed band sliders not moving reliably with laptop trackpads.
+- Improved Voice mode's protection against very short, ringy corrections while
+  leaving normal Voice matches and every other mode unchanged.
+- Released temporary recording memory when a host deactivates the plug-in;
+  saved corrections still restore normally when it is activated again.
+
 ## [1.0.0] - 2026-08-21
 
 ### Added

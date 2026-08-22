@@ -1,13 +1,25 @@
-# Tone Trace EQ 1.0.0 release notes
+# Tone Trace EQ 1.0.1 release notes
 
-Tone Trace EQ 1.0.0 is the first stable public release of the Lanes Audio match
-EQ. The supported binary release is Windows x64 in CLAP format.
+Tone Trace EQ 1.0.1 is a Windows CLAP maintenance release. It keeps the 1.0.0
+state, keyboard, and screen-reader contracts while correcting band-fader
+dragging for Windows precision touchpads and improving Voice-mode safety.
+
+## Fixed
+
+- Band faders now respond reliably to tap-and-drag gestures from Windows
+  precision touchpads.
+- Automated testing now covers that touchpad interaction in the real Windows
+  editor control.
+- Voice mode now catches very short ringing that could slip past its existing
+  safeguard. Normal Voice matches and all other modes remain unchanged.
+- Temporary recording memory is released when the host deactivates Tone Trace.
+  Saved corrections still restore normally when it is activated again.
 
 ## Release asset
 
 Publish exactly one binary asset:
 
-`ToneTrace_EQ_1.0.0_Windows_x64.zip`
+`ToneTrace_EQ_1.0.1_Windows_x64.zip`
 
 The ZIP contains:
 
@@ -44,6 +56,8 @@ Removing the copied `.clap` file uninstalls Tone Trace.
 
 - Release x64 compilation with Visual Studio 2022 and the static MSVC runtime.
 - Engine, real-time renderer, UI-layout, state, and mock CLAP-host tests.
+- Real Win32 editor regression coverage for captured precision-touchpad
+  dragging.
 - Native-editor render and mouse-interaction checks across Match and every
   Bands tab, including complete action captions, hover/focus feedback,
   tooltips, graph readout tracking, and 1 dB mouse-wheel adjustment.
