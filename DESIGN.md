@@ -136,6 +136,14 @@ The plug-in uses this same filter data so a direct impulse response and the live
 processor agree. A more compact filter may be evaluated later, but it must pass
 the same audio and CPU tests before replacing or supplementing the current path.
 
+Initial filter preparation and the first audio block use an explicit handoff.
+If they arrive at exactly the same time, the audio thread never waits: that one
+block passes through unchanged and the prepared correction takes over on the
+next block. Later corrections continue to use the normal click-free crossfade.
+The live renderer also has a separate practical length limit from offline IR
+export; an oversized live request is rejected without replacing the last good
+profile.
+
 ## Quality gate before plug-in wrappers
 
 - A self-match must remain essentially flat.

@@ -129,8 +129,10 @@ clap_plugin_t ── CLAP_EXT_GUI ──> ToneTraceWin32Editor
   callbacks (same shape as the reference editor). No audio-thread access.
 - Editor redraws on a 30 Hz timer only while shown and realtime; the timer is
   stopped while offline/hidden so NVDA is never flooded.
-- Resizable; layout uses a `px()` DPI scale. The canvas keeps a stable aspect
-  so curves do not distort on resize.
+- Resizable; the preferred size, minimum size, fonts, controls, and painted
+  details all use the same host-provided `px()` scale. A scale change after the
+  editor is attached rebuilds its fonts and lays the controls out again. The
+  canvas keeps a stable aspect so curves do not distort on resize.
 
 ## Explicit non-goals
 

@@ -12,6 +12,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -532,6 +533,55 @@ void testHeadlessPluginCore() {
   std::cout << "headless host adapter, last-known-good, and state restore: passed\n";
 }
 
+void testInitialCommitProcessHandoff() {
+  for (int iteration = 0; iteration < 48; ++iteration) {
+    tonetrace::RealtimeConvolverConfig config;
+    config.channels = 1;
+    tonetrace::HeadlessPluginCore core(config);
+    const auto snapshot = testSnapshot();
+    tonetrace::ProfileValidation committed;
+    std::atomic<bool> start{false};
+    std::vector<float> input(64, 0.125F);
+    std::vector<float> output(64, 0.0F);
+    const float* inputs[]{input.data()};
+    float* outputs[]{output.data()};
+
+    std::thread control([&] {
+      while (!start.load(std::memory_order_acquire)) {
+      }
+      committed = core.commitCandidate(snapshot);
+    });
+    std::thread audio([&] {
+      while (!start.load(std::memory_order_acquire)) {
+      }
+      core.process(inputs, outputs, 1, input.size());
+    });
+    start.store(true, std::memory_order_release);
+    control.join();
+    audio.join();
+
+    require(committed.accepted,
+            "The first process/commit handoff rejected a valid correction");
+    require(std::all_of(output.begin(), output.end(),
+                        [](float value) { return std::isfinite(value); }),
+            "The first process/commit handoff produced invalid audio");
+  }
+
+  tonetrace::RealtimeConvolverConfig highRate;
+  highRate.sampleRate = 192000;
+  highRate.channels = 1;
+  tonetrace::HeadlessPluginCore bounded(highRate);
+  auto excessive = testSnapshot();
+  excessive.renderSettings.sampleRate = highRate.sampleRate;
+  excessive.renderSettings.durationSeconds = 10.0;
+  const auto rejected = bounded.commitCandidate(excessive);
+  require(!rejected.accepted &&
+              rejected.issue == tonetrace::ProfileIssue::InvalidModel &&
+              bounded.phase() == tonetrace::WorkflowPhase::Ready,
+          "An oversized realtime profile escaped or damaged the ready state");
+  std::cout << "first-block handoff and realtime IR limit: passed\n";
+}
+
 }  // namespace
 
 int main() {
@@ -558,6 +608,7 @@ int main() {
     testRapidKernelCoalescing();
     testAudioThreadAllocationFreedom();
     testHeadlessPluginCore();
+    testInitialCommitProcessHandoff();
     std::cout << "all Tone Trace realtime-core tests passed\n";
     return 0;
   } catch (const std::exception& error) {

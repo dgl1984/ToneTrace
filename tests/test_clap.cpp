@@ -28,6 +28,7 @@ namespace {
 
 constexpr clap_id kWorkflow = 100;
 constexpr clap_id kMatchMode = 110;
+constexpr clap_id kCorrectionStrength = 120;
 constexpr clap_id kLastCommand = 195;
 constexpr clap_id kConfidence = 200;
 constexpr clap_id kCurveDrift = 210;
@@ -264,7 +265,20 @@ void verifyPrecisionTouchpadBandDrag(const clap_plugin_t* plugin) {
   require(gui != nullptr &&
               gui->is_api_supported(plugin, CLAP_WINDOW_API_WIN32, false) &&
               gui->create(plugin, CLAP_WINDOW_API_WIN32, false),
-          "Win32 editor could not be created for pointer testing");
+           "Win32 editor could not be created for pointer testing");
+
+  require(gui->set_scale(plugin, 1.25),
+          "Win32 editor rejected a normal CLAP scale");
+  uint32_t preferredWidth = 0;
+  uint32_t preferredHeight = 0;
+  require(gui->get_size(plugin, &preferredWidth, &preferredHeight) &&
+              preferredWidth == 1225 && preferredHeight == 800,
+          "Win32 editor did not scale its preferred physical size");
+  uint32_t minimumWidth = 1;
+  uint32_t minimumHeight = 1;
+  require(gui->adjust_size(plugin, &minimumWidth, &minimumHeight) &&
+              minimumWidth == 800 && minimumHeight == 500,
+          "Win32 editor did not scale its minimum physical size");
 
   HWND hostWindow = CreateWindowExW(
       0, L"STATIC", L"Tone Trace pointer test host", WS_OVERLAPPEDWINDOW,
@@ -274,6 +288,8 @@ void verifyPrecisionTouchpadBandDrag(const clap_plugin_t* plugin) {
   clap_window_t parent{};
   parent.api = CLAP_WINDOW_API_WIN32;
   parent.win32 = hostWindow;
+  require(gui->set_size(plugin, preferredWidth, preferredHeight),
+          "Win32 editor rejected a size negotiated before attachment");
   require(gui->set_parent(plugin, &parent),
           "Win32 editor could not attach to the pointer test host");
 
@@ -290,6 +306,33 @@ void verifyPrecisionTouchpadBandDrag(const clap_plugin_t* plugin) {
       reinterpret_cast<LPARAM>(&bandFader));
   require(bandFader != nullptr,
           "the first band fader was not present in the Win32 editor");
+
+  const HWND editorWindow = GetParent(bandFader);
+  RECT editorBounds{};
+  GetClientRect(editorWindow, &editorBounds);
+  require(editorBounds.right == static_cast<LONG>(preferredWidth) &&
+              editorBounds.bottom == static_cast<LONG>(preferredHeight),
+          "Win32 editor client area disagrees with its scaled size");
+  LOGFONTW faderFont{};
+  const HFONT faderFontHandle = reinterpret_cast<HFONT>(
+      SendMessageW(bandFader, WM_GETFONT, 0, 0));
+  require(faderFontHandle != nullptr &&
+              GetObjectW(faderFontHandle, sizeof(faderFont), &faderFont) ==
+                  sizeof(faderFont) &&
+              std::abs(faderFont.lfHeight) >= 16,
+          "Win32 editor did not scale its control fonts");
+
+  const HWND strengthEdit = GetDlgItem(editorWindow, 300);
+  const auto* params = static_cast<const clap_plugin_params_t*>(
+      plugin->get_extension(plugin, CLAP_EXT_PARAMS));
+  require(strengthEdit != nullptr && params != nullptr,
+          "Win32 editor value field was not available for Enter testing");
+  SetWindowTextW(strengthEdit, L"0.5");
+  SendMessageW(strengthEdit, WM_KEYDOWN, VK_RETURN, 0);
+  double enteredStrength = 0.0;
+  require(params->get_value(plugin, kCorrectionStrength, &enteredStrength) &&
+              std::abs(enteredStrength - 0.5) < 1.0e-9,
+          "Enter did not commit a typed Win32 editor value");
 
   RECT bounds{};
   GetClientRect(bandFader, &bounds);
@@ -316,6 +359,22 @@ void verifyPrecisionTouchpadBandDrag(const clap_plugin_t* plugin) {
   SendMessageW(bandFader, WM_LBUTTONUP, 0, MAKELPARAM(x, top));
   require(GetCapture() != bandFader,
           "band fader retained pointer capture after release");
+
+  preferredWidth = 1470;
+  preferredHeight = 960;
+  require(gui->set_scale(plugin, 1.5) &&
+              gui->set_size(plugin, preferredWidth, preferredHeight) &&
+              gui->get_size(plugin, &preferredWidth, &preferredHeight) &&
+              preferredWidth == 1470 && preferredHeight == 960,
+          "Win32 editor could not apply a scale change after attachment");
+  LOGFONTW resizedFont{};
+  const HFONT resizedFontHandle = reinterpret_cast<HFONT>(
+      SendMessageW(bandFader, WM_GETFONT, 0, 0));
+  require(resizedFontHandle != nullptr &&
+              GetObjectW(resizedFontHandle, sizeof(resizedFont), &resizedFont) ==
+                  sizeof(resizedFont) &&
+              std::abs(resizedFont.lfHeight) >= 19,
+          "Win32 editor did not rebuild fonts after a scale change");
   gui->destroy(plugin);
   DestroyWindow(hostWindow);
 }

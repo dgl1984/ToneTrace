@@ -284,7 +284,13 @@ class ToneTraceWin32Editor::Impl {
       if (window_ == nullptr) return false;
       // The template's DIALOGEX coordinates are dialog units, not pixels.
       // Force the client area to the exact design size.
-      SetWindowPos(window_, nullptr, 0, 0, kWidth, kHeight,
+      const int initialWidth = requestedWidth_ != 0
+                                   ? static_cast<int>(requestedWidth_)
+                                   : px(kWidth);
+      const int initialHeight = requestedHeight_ != 0
+                                    ? static_cast<int>(requestedHeight_)
+                                    : px(kHeight);
+      SetWindowPos(window_, nullptr, 0, 0, initialWidth, initialHeight,
                    SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     } else {
       const LONG_PTR exStyle =
@@ -301,18 +307,50 @@ class ToneTraceWin32Editor::Impl {
   }
 
   bool setScale(double scale) {
+    if (!std::isfinite(scale) || scale <= 0.0) return false;
+    const double previous = scale_;
     scale_ = std::clamp(scale, 0.5, 4.0);
+    if (window_ != nullptr && scale_ != previous) {
+      if (!recreateFonts()) {
+        scale_ = previous;
+        return false;
+      }
+      layoutChildren();
+      InvalidateRect(window_, nullptr, TRUE);
+    }
     return true;
   }
 
   bool getSize(std::uint32_t& width, std::uint32_t& height) const {
-    width = static_cast<std::uint32_t>(kWidth);
-    height = static_cast<std::uint32_t>(kHeight);
+    if (window_ != nullptr) {
+      RECT bounds{};
+      if (GetClientRect(window_, &bounds)) {
+        width = static_cast<std::uint32_t>(std::max<LONG>(0, bounds.right));
+        height = static_cast<std::uint32_t>(std::max<LONG>(0, bounds.bottom));
+        return true;
+      }
+    }
+    if (requestedWidth_ != 0 && requestedHeight_ != 0) {
+      width = requestedWidth_;
+      height = requestedHeight_;
+      return true;
+    }
+    width = static_cast<std::uint32_t>(px(kWidth));
+    height = static_cast<std::uint32_t>(px(kHeight));
     return true;
   }
 
   bool setSize(std::uint32_t width, std::uint32_t height) {
-    if (window_ == nullptr) return false;
+    if (width == 0 || height == 0 ||
+        width > static_cast<std::uint32_t>(INT_MAX) ||
+        height > static_cast<std::uint32_t>(INT_MAX)) {
+      return false;
+    }
+    requestedWidth_ = width;
+    requestedHeight_ = height;
+    // Hosts may negotiate the editor size before set_parent(). Remember that
+    // choice and use it when the native child window is created.
+    if (window_ == nullptr) return true;
     if (reaperWrapper_ != nullptr) {
       const POINT origin = editorOrigin();
       SetWindowPos(window_, nullptr, origin.x, origin.y,
@@ -327,8 +365,10 @@ class ToneTraceWin32Editor::Impl {
   }
 
   bool adjustSize(std::uint32_t& width, std::uint32_t& height) const {
-    width = std::max<std::uint32_t>(width, 640);
-    height = std::max<std::uint32_t>(height, 400);
+    width = std::max<std::uint32_t>(width,
+                                    static_cast<std::uint32_t>(px(640)));
+    height = std::max<std::uint32_t>(height,
+                                     static_cast<std::uint32_t>(px(400)));
     return true;
   }
 
@@ -350,6 +390,7 @@ class ToneTraceWin32Editor::Impl {
     if (window_ == nullptr) return false;
     ShowWindow(window_, SW_HIDE);
     KillTimer(window_, kTimerId);
+    cancelTraceAnnounce();
     return true;
   }
 
@@ -402,6 +443,7 @@ class ToneTraceWin32Editor::Impl {
   void focusFirstControl();
   void setTabOrder();
   void setSubclass(HWND control, WNDPROC proc);
+  bool recreateFonts();
   [[nodiscard]] bool forwardTraceArrows(HWND control) const;
   static constexpr int kWidth = 980;
   static constexpr int kHeight = 640;
@@ -597,6 +639,8 @@ class ToneTraceWin32Editor::Impl {
   std::wstring lastDescriptionText_;
   UINT_PTR traceAnnounceTimer_ = 0;
   double scale_ = 1.0;
+  std::uint32_t requestedWidth_ = 0;
+  std::uint32_t requestedHeight_ = 0;
   bool offline_ = false;
   bool traceMode_ = false;
   bool cursorVisible_ = false;
@@ -990,6 +1034,15 @@ LRESULT CALLBACK ToneTraceWin32Editor::Impl::keyForwardProc(
     Impl* impl = fromWindow(GetParent(hwnd));
     if (impl != nullptr) {
       const int key = static_cast<int>(wParam);
+      if (key == VK_RETURN) {
+        const auto found = std::find(impl->editControls_.begin(),
+                                     impl->editControls_.end(), hwnd);
+        if (found != impl->editControls_.end()) {
+          impl->applyEdit(static_cast<int>(
+              std::distance(impl->editControls_.begin(), found)));
+          return 0;
+        }
+      }
       if (key == 'T' || key == VK_F2) {
         impl->toggleTrace();
         return 0;
@@ -1473,6 +1526,58 @@ void ToneTraceWin32Editor::Impl::setTabOrder() {
   moveTop(tabControl_);
 }
 
+bool ToneTraceWin32Editor::Impl::recreateFonts() {
+  HFONT regular = CreateFontW(
+      -px(13), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+      DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+  HFONT title = CreateFontW(
+      -px(22), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+      DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+  HFONT small = CreateFontW(
+      -px(11), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+      DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+  if (regular == nullptr || title == nullptr || small == nullptr) {
+    if (regular != nullptr) DeleteObject(regular);
+    if (title != nullptr) DeleteObject(title);
+    if (small != nullptr) DeleteObject(small);
+    return false;
+  }
+
+  const HFONT oldRegular = font_;
+  const HFONT oldTitle = titleFont_;
+  const HFONT oldSmall = smallFont_;
+  font_ = regular;
+  titleFont_ = title;
+  smallFont_ = small;
+
+  const auto apply = [](HWND control, HFONT font) {
+    if (control != nullptr) {
+      SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    }
+  };
+  apply(tabControl_, font_);
+  apply(statusEdit_, font_);
+  apply(readoutEdit_, font_);
+  apply(descriptionEdit_, font_);
+  apply(modeCombo_, font_);
+  apply(traceButton_, font_);
+  for (HWND control : workflowButtons_) apply(control, font_);
+  for (HWND control : editControls_) apply(control, font_);
+  for (HWND label : editLabels_) apply(label, smallFont_);
+  for (const TracePage& page : tracePages_) {
+    for (HWND control : page.edits) apply(control, font_);
+    for (HWND label : page.labels) apply(label, smallFont_);
+  }
+
+  if (oldRegular != nullptr) DeleteObject(oldRegular);
+  if (oldTitle != nullptr) DeleteObject(oldTitle);
+  if (oldSmall != nullptr) DeleteObject(oldSmall);
+  return true;
+}
+
 bool ToneTraceWin32Editor::Impl::createChildren() {
   const HINSTANCE instance = moduleInstance();
 
@@ -1485,17 +1590,7 @@ bool ToneTraceWin32Editor::Impl::createChildren() {
   panelBrush_ = CreateSolidBrush(RGB(30, 30, 36));
   editBrush_ = CreateSolidBrush(RGB(245, 245, 245));
   accentBrush_ = CreateSolidBrush(RGB(255, 200, 90));
-  font_ = CreateFontW(-px(13), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-  titleFont_ = CreateFontW(-px(22), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                           CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                           DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-  smallFont_ = CreateFontW(-px(11), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                           CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                           DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+  if (!recreateFonts()) return false;
 
   constexpr std::pair<int, const wchar_t*> kWorkflow[]{
       {kCaptureReferenceId, L"Capture Reference"},
@@ -2255,9 +2350,11 @@ void ToneTraceWin32Editor::Impl::refreshDescription() {
 
 void ToneTraceWin32Editor::Impl::copyDescriptionToClipboard() {
   if (descriptionEdit_ == nullptr) return;
-  wchar_t buffer[4096]{};
-  const int length = GetWindowTextW(
-      descriptionEdit_, buffer, static_cast<int>(std::size(buffer)));
+  const int requested = GetWindowTextLengthW(descriptionEdit_);
+  if (requested <= 0) return;
+  std::vector<wchar_t> buffer(static_cast<std::size_t>(requested) + 1U, L'\0');
+  const int length = GetWindowTextW(descriptionEdit_, buffer.data(),
+                                    static_cast<int>(buffer.size()));
   if (length <= 0) return;
   if (!OpenClipboard(window_)) return;
   const bool emptied = EmptyClipboard() != 0;
@@ -2267,7 +2364,7 @@ void ToneTraceWin32Editor::Impl::copyDescriptionToClipboard() {
     if (memory != nullptr) {
       void* data = GlobalLock(memory);
       if (data != nullptr) {
-        std::memcpy(data, buffer, bytes);
+        std::memcpy(data, buffer.data(), bytes);
         GlobalUnlock(memory);
         if (SetClipboardData(CF_UNICODETEXT, memory) == nullptr) {
           GlobalFree(memory);
@@ -2339,12 +2436,8 @@ void ToneTraceWin32Editor::Impl::showTransferMenu(bool exportMenu) {
     AppendMenuW(menu, MF_STRING, kImportModel,
                 L"Import Correction Model (TTM)...");
   }
-  const std::size_t anchorIndex = exportMenu ? 5 : 6;
-  if (anchorIndex >= workflowButtons_.size()) {
-    DestroyMenu(menu);
-    return;
-  }
-  const HWND anchor = workflowButtons_[anchorIndex];
+  const HWND anchor =
+      GetDlgItem(window_, exportMenu ? kExportId : kImportId);
   RECT rect{};
   if (anchor != nullptr && GetWindowRect(anchor, &rect)) {
     TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,

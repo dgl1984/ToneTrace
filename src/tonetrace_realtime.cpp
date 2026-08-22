@@ -474,6 +474,14 @@ namespace {
 
 std::vector<double> renderValidatedProfileKernel(
     const ProfileSnapshot& snapshot) {
+  const long double realtimeFrames = std::ceil(
+      static_cast<long double>(snapshot.renderSettings.durationSeconds) *
+      static_cast<long double>(snapshot.renderSettings.sampleRate));
+  if (realtimeFrames >
+      static_cast<long double>(kMaximumRealtimeIrFrames)) {
+    throw std::runtime_error(
+        "Profile IR is too long for the realtime renderer");
+  }
   auto audibleModel = snapshot.uncappedModel;
   const double ceiling = snapshot.matchSettings.maximumCorrectionDb;
   if (!std::isfinite(ceiling) || ceiling <= 0.0 || ceiling > 60.0) {
@@ -646,11 +654,15 @@ class RealtimeConvolver::Impl {
     if (pending_.load(std::memory_order_acquire) != nullptr || fading_ != nullptr) {
       throw std::runtime_error("A realtime kernel transition is already active");
     }
+    // Prepare the replacement completely before releasing the current engine.
+    // If allocation or FFT preparation fails, the last working kernel remains
+    // owned and active instead of leaving active_ pointing at cleared storage.
+    std::vector<std::unique_ptr<ConvolutionEngine>> replacement;
+    replacement.reserve(1);
+    replacement.push_back(std::make_unique<ConvolutionEngine>(config_, ir));
     collectRetired();
-    owned_.clear();
-    auto engine = std::make_unique<ConvolutionEngine>(config_, ir);
-    active_ = engine.get();
-    owned_.push_back(std::move(engine));
+    owned_.swap(replacement);
+    active_ = owned_.front().get();
   }
 
   bool submit(const std::vector<double>& ir) {
@@ -852,37 +864,74 @@ HeadlessPluginCore::HeadlessPluginCore(const RealtimeConvolverConfig& config)
   renderer_.installInitialKernel({1.0});
 }
 
-ProfileValidation HeadlessPluginCore::commitCandidate(
-    const ProfileSnapshot& candidate) {
-  const auto validation = validateProfileSnapshot(candidate);
-  if (!validation.accepted) return validation;
-  std::vector<double> kernel;
-  try {
-    kernel = renderValidatedProfileKernel(candidate);
-  } catch (const std::exception& error) {
-    return {false, ProfileIssue::InvalidModel, error.what()};
+ProfileValidation HeadlessPluginCore::commitKernel(
+    const std::vector<double>& kernel) {
+  RendererRunState expected = RendererRunState::ReadyForInitialInstall;
+  if (rendererRunState_.compare_exchange_strong(
+          expected, RendererRunState::InitialInstall,
+          std::memory_order_acq_rel, std::memory_order_acquire)) {
+    try {
+      renderer_.installInitialKernel(kernel);
+      rendererRunState_.store(RendererRunState::ReadyForInitialInstall,
+                              std::memory_order_release);
+      return {true, ProfileIssue::None, "Realtime kernel is ready"};
+    } catch (const std::exception& error) {
+      rendererRunState_.store(RendererRunState::ReadyForInitialInstall,
+                              std::memory_order_release);
+      return {false, ProfileIssue::InvalidModel, error.what()};
+    }
   }
-  if (processingStarted_.load(std::memory_order_acquire)) {
+
+  if (expected == RendererRunState::InitialInstall) {
+    return {false, ProfileIssue::RendererBusy,
+            "The initial correction is still being prepared"};
+  }
+
+  try {
     renderer_.collectRetiredKernels();
     if (!renderer_.submitKernel(kernel)) {
       return {false, ProfileIssue::RendererBusy,
               "A previous correction transition is still completing"};
     }
-  } else {
-    renderer_.installInitialKernel(kernel);
+  } catch (const std::exception& error) {
+    return {false, ProfileIssue::InvalidModel, error.what()};
   }
-  snapshot_ = std::make_unique<ProfileSnapshot>(candidate);
+  return {true, ProfileIssue::None, "Realtime kernel is ready"};
+}
+
+void HeadlessPluginCore::copyBypassedAudio(const float* const* inputs,
+                                           float* const* outputs,
+                                           std::size_t channelCount,
+                                           std::size_t frames) noexcept {
+  if (inputs == nullptr || outputs == nullptr) return;
+  for (std::size_t channel = 0; channel < channelCount; ++channel) {
+    if (inputs[channel] == nullptr || outputs[channel] == nullptr) return;
+    std::copy_n(inputs[channel], frames, outputs[channel]);
+  }
+}
+
+ProfileValidation HeadlessPluginCore::commitCandidate(
+    const ProfileSnapshot& candidate) {
+  const auto validation = validateProfileSnapshot(candidate);
+  if (!validation.accepted) return validation;
+  std::vector<double> kernel;
+  std::unique_ptr<ProfileSnapshot> committed;
+  try {
+    kernel = renderValidatedProfileKernel(candidate);
+    committed = std::make_unique<ProfileSnapshot>(candidate);
+  } catch (const std::exception& error) {
+    return {false, ProfileIssue::InvalidModel, error.what()};
+  }
+  const auto rendererResult = commitKernel(kernel);
+  if (!rendererResult.accepted) return rendererResult;
+  snapshot_ = std::move(committed);
   return validation;
 }
 
 void HeadlessPluginCore::clearProfile() {
-  if (processingStarted_.load(std::memory_order_acquire)) {
-    renderer_.collectRetiredKernels();
-    if (!renderer_.submitKernel({1.0})) {
-      throw std::runtime_error("A previous correction transition is still completing");
-    }
-  } else {
-    renderer_.installInitialKernel({1.0});
+  const auto rendererResult = commitKernel({1.0});
+  if (!rendererResult.accepted) {
+    throw std::runtime_error(rendererResult.message);
   }
   snapshot_.reset();
 }
@@ -892,17 +941,28 @@ std::string HeadlessPluginCore::saveProjectState() const {
 }
 
 void HeadlessPluginCore::loadProjectState(const std::string& bytes) {
-  if (processingStarted_.load(std::memory_order_acquire)) {
+  RendererRunState expected = RendererRunState::ReadyForInitialInstall;
+  if (!rendererRunState_.compare_exchange_strong(
+          expected, RendererRunState::InitialInstall,
+          std::memory_order_acq_rel, std::memory_order_acquire)) {
     throw std::runtime_error("Project state must load before audio processing starts");
   }
-  auto restored = deserializeProjectState(bytes);
-  if (restored.phase == WorkflowPhase::Frozen && restored.snapshot) {
-    const auto kernel = renderProfileKernel(*restored.snapshot);
-    renderer_.installInitialKernel(kernel);
-    snapshot_ = std::move(restored.snapshot);
-  } else {
-    renderer_.installInitialKernel({1.0});
-    snapshot_.reset();
+  try {
+    auto restored = deserializeProjectState(bytes);
+    if (restored.phase == WorkflowPhase::Frozen && restored.snapshot) {
+      const auto kernel = renderProfileKernel(*restored.snapshot);
+      renderer_.installInitialKernel(kernel);
+      snapshot_ = std::move(restored.snapshot);
+    } else {
+      renderer_.installInitialKernel({1.0});
+      snapshot_.reset();
+    }
+    rendererRunState_.store(RendererRunState::ReadyForInitialInstall,
+                            std::memory_order_release);
+  } catch (...) {
+    rendererRunState_.store(RendererRunState::ReadyForInitialInstall,
+                            std::memory_order_release);
+    throw;
   }
 }
 
@@ -924,7 +984,17 @@ void HeadlessPluginCore::process(const float* const* inputs,
                                  float* const* outputs,
                                  std::size_t channelCount,
                                  std::size_t frames) noexcept {
-  processingStarted_.store(true, std::memory_order_release);
+  RendererRunState expected = RendererRunState::ReadyForInitialInstall;
+  if (!rendererRunState_.compare_exchange_strong(
+          expected, RendererRunState::Processing,
+          std::memory_order_acq_rel, std::memory_order_acquire) &&
+      expected == RendererRunState::InitialInstall) {
+    // Never wait on the audio thread. If the very first block arrives during
+    // an initial control-thread install, pass that one block through and let
+    // the next block claim the renderer after preparation has finished.
+    copyBypassedAudio(inputs, outputs, channelCount, frames);
+    return;
+  }
   renderer_.process(inputs, outputs, channelCount, frames);
 }
 

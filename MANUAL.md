@@ -236,6 +236,10 @@ There is one deliberate limitation: the raw recordings are not stored in the pro
 
 The Windows Match page keeps the controls used most often in front of you: Match Mode, Correction Strength, Maximum Correction, Correction Gain, Q / Sharpness, the low/high correction range, and Emergency Clip Guard. Less frequently changed global options—including **Full Correction Range**, **Correction Resolution**, tone-notification settings, Bypass, and the Reset workflow—remain available through the host's generic parameter view.
 
+When you type a number into one of the Match-page value boxes, press **Enter**
+to apply it immediately, or press **Tab** to apply it and move to the next
+control.
+
 ### Maximum Correction
 
 Range: **1 to 60 dB**. Default: **18 dB**.

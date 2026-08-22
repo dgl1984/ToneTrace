@@ -3,13 +3,21 @@
 All notable Tone Trace EQ changes are recorded here. Versions follow semantic
 versioning, and release dates use `YYYY-MM-DD`.
 
-## [1.0.1] - 2026-08-21
+## [1.0.1] - 2026-08-22
 
 ### Fixed
 
 - Fixed band sliders not moving reliably with laptop trackpads.
+- Made the window and its text scale together, so hosts using Windows display
+  scaling do not crowd or clip the controls.
 - Kept the 20 kHz label inside the Match graph so the Curve Description panel
   cannot cover it.
+- Tightened the handoff between the first audio block and a newly prepared
+  correction, and kept an unusually long or failed correction from disturbing
+  the last one that worked.
+- Pressing Enter now applies a value typed into one of the Match-page boxes.
+- Copy Curve Description now copies the whole description instead of relying
+  on a fixed-size buffer.
 - Improved Voice mode's protection against very short, ringy corrections while
   leaving normal Voice matches and every other mode unchanged.
 - Released temporary recording memory when a host deactivates the plug-in;

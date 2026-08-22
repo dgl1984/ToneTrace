@@ -8,8 +8,16 @@ dragging for Windows precision touchpads and improving Voice-mode safety.
 
 - Band faders now respond reliably to tap-and-drag gestures from Windows
   precision touchpads.
-- Automated testing now covers that touchpad interaction in the real Windows
-  editor control.
+- The editor's window, text, controls, and minimum size now scale together in
+  hosts that provide a Windows display scale.
+- The first audio block can no longer overlap initial correction preparation,
+  and a failed or oversized realtime correction leaves the last good state
+  alone.
+- Enter now applies typed Match-page values, and Copy Curve Description copies
+  the complete text.
+- Automated testing now covers captured-pointer dragging in the Windows editor
+  control, host-provided scaling before and after attachment, and the first
+  audio-block handoff.
 - The 20 kHz label now remains fully visible at the right edge of the Match
   graph.
 - Voice mode now catches very short ringing that could slip past its existing
@@ -59,8 +67,8 @@ Removing the copied `.clap` file uninstalls Tone Trace.
 - Complete 64-bit Windows release build.
 - Automated tests for matching, real-time playback, saved projects, layout,
   and host communication.
-- Real Windows editor tests for precision-touchpad dragging.
-- Visual and mouse checks across Match and every Bands tab, including action
-  captions, hover and focus feedback, tooltips, graph tracking, and 1 dB
-  mouse-wheel adjustment.
+- Windows editor-control tests for captured-pointer dragging, scaled sizing and
+  fonts, typed-value commits, and pointer release.
+- Automated layout checks across Match and the Bands tabs, including changing
+  band counts and balanced page ranges.
 - Package-content verification after ZIP creation.

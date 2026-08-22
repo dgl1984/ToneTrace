@@ -161,6 +161,9 @@ class RealtimeConvolver {
   void collectRetiredKernels() noexcept;
 
   void setBypassed(bool bypassed) noexcept;
+  // Audio-thread operation. Hosts must not call reset() concurrently with
+  // process(); this matches the CLAP reset contract and keeps renderer-owned
+  // fade state on one thread.
   void reset() noexcept;
 
   void process(const float* const* inputs,
@@ -204,9 +207,23 @@ class HeadlessPluginCore {
   [[nodiscard]] const ProfileSnapshot* frozenSnapshot() const noexcept;
 
  private:
+  enum class RendererRunState : std::uint8_t {
+    ReadyForInitialInstall,
+    InitialInstall,
+    Processing,
+  };
+
+  [[nodiscard]] ProfileValidation commitKernel(
+      const std::vector<double>& kernel);
+  static void copyBypassedAudio(const float* const* inputs,
+                                float* const* outputs,
+                                std::size_t channelCount,
+                                std::size_t frames) noexcept;
+
   RealtimeConvolver renderer_;
   std::unique_ptr<ProfileSnapshot> snapshot_;
-  std::atomic<bool> processingStarted_{false};
+  std::atomic<RendererRunState> rendererRunState_{
+      RendererRunState::ReadyForInitialInstall};
 };
 
 }  // namespace tonetrace

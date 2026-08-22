@@ -6,7 +6,7 @@ if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "SOURCE_DIR=%SCRIPT_DIR%"
 set "FAILED_STEP="
 set "BUILD_ERROR=1"
-set "BUILD_SCRIPT_VERSION=2026-08-21a"
+set "BUILD_SCRIPT_VERSION=2026-08-22a"
 
 if not "%SCRIPT_DIR:!=%"=="%SCRIPT_DIR%" (
   echo Tone Trace complete Windows build
