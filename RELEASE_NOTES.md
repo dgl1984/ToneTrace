@@ -17,7 +17,7 @@ dragging for Windows precision touchpads and improving Voice-mode safety.
 
 ## Release asset
 
-Publish exactly one binary asset:
+The release has one binary asset:
 
 `ToneTrace_EQ_1.0.1_Windows_x64.zip`
 
@@ -54,15 +54,11 @@ Removing the copied `.clap` file uninstalls Tone Trace.
 
 ## Validation performed
 
-- Release x64 compilation with Visual Studio 2022 and the static MSVC runtime.
-- Engine, real-time renderer, UI-layout, state, and mock CLAP-host tests.
-- Real Win32 editor regression coverage for captured precision-touchpad
-  dragging.
-- Native-editor render and mouse-interaction checks across Match and every
-  Bands tab, including complete action captions, hover/focus feedback,
-  tooltips, graph readout tracking, and 1 dB mouse-wheel adjustment.
+- Complete 64-bit Windows release build.
+- Automated tests for matching, real-time playback, saved projects, layout,
+  and host communication.
+- Real Windows editor tests for precision-touchpad dragging.
+- Visual and mouse checks across Match and every Bands tab, including action
+  captions, hover and focus feedback, tooltips, graph tracking, and 1 dB
+  mouse-wheel adjustment.
 - Package-content verification after ZIP creation.
-
-Before publication, complete the real-host checklist in
-`plugins/README.md`, especially REAPER discovery, save/reload, duplicate
-instances, NVDA/OSARA navigation, and the full capture workflow.
