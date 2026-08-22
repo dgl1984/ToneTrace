@@ -10,6 +10,8 @@ dragging for Windows precision touchpads and improving Voice-mode safety.
   precision touchpads.
 - Automated testing now covers that touchpad interaction in the real Windows
   editor control.
+- The 20 kHz label now remains fully visible at the right edge of the Match
+  graph.
 - Voice mode now catches very short ringing that could slip past its existing
   safeguard. Normal Voice matches and all other modes remain unchanged.
 - Temporary recording memory is released when the host deactivates Tone Trace.

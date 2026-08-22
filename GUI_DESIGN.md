@@ -25,7 +25,8 @@ The engine's `ProfileSnapshot` (reference capture, target capture, correction
 model) is drawn on a log-frequency (20 Hz-20 kHz) by dB graph with a dark
 background and readable light grid. The vertical display range adapts to the
 material instead of hard-clipping every curve at +/-12 dB, and dedicated top
-and bottom margins keep frequency labels and the legend out of the curves.
+and bottom margins keep frequency labels and the legend out of the curves. Edge
+labels remain inside the graph so neighboring panels cannot cover them.
 Three curves:
 
 - **Reference** curve: one hue, thin stroke. Identifies what the source tone

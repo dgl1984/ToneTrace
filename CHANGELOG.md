@@ -8,6 +8,8 @@ versioning, and release dates use `YYYY-MM-DD`.
 ### Fixed
 
 - Fixed band sliders not moving reliably with laptop trackpads.
+- Kept the 20 kHz label inside the Match graph so the Curve Description panel
+  cannot cover it.
 - Improved Voice mode's protection against very short, ringy corrections while
   leaving normal Voice matches and every other mode unchanged.
 - Released temporary recording memory when a host deactivates the plug-in;

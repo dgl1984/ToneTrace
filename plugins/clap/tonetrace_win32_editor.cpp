@@ -1975,9 +1975,22 @@ void ToneTraceWin32Editor::Impl::paintCanvas(HDC dc, const RECT& bounds) {
       std::swprintf(label, std::size(label), L"%dk",
                     static_cast<int>(decade / 1000));
     }
-    RECT text{x + px(3), bounds.top + px(2), x + px(44),
-              bounds.top + px(16)};
-    DrawTextW(dc, label, -1, &text, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+    // The final 20 kHz tick lands on plot.right. Keep the label rectangle
+    // inside the graph so the neighboring Curve Description panel cannot
+    // cover the far-right frequency label.
+            const int labelWidth = px(44);
+            const int plotLeft = static_cast<int>(plot.left);
+            const int plotRight = static_cast<int>(plot.right);
+            const bool clampRight = x + labelWidth > plotRight;
+            RECT text{
+                clampRight ? std::max(plotLeft, plotRight - labelWidth) : x + px(3),
+                bounds.top + px(2),
+                clampRight ? std::max(plotLeft, plotRight - px(3))
+                           : std::min(plotRight, x + labelWidth),
+                bounds.top + px(16)};
+    const UINT textAlign = clampRight ? DT_RIGHT : DT_LEFT;
+    DrawTextW(dc, label, -1, &text,
+              textAlign | DT_SINGLELINE | DT_NOPREFIX);
   }
 
   // Five horizontal divisions follow the adaptive +/- display range.
