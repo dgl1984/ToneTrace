@@ -1053,6 +1053,32 @@ tonetrace::SpectrumCapture syntheticVoiceSpectrum(bool reference, bool rough,
   return capture;
 }
 
+tonetrace::SpectrumCapture syntheticEarlyRingVoiceSpectrum(
+    bool reference, int sampleRate = 48000) {
+  tonetrace::SpectrumCapture capture;
+  capture.sampleRate = sampleRate;
+  capture.fftSize = 4096;
+  capture.acceptedFrames = 100;
+  capture.confidence = 1.0;
+  constexpr int pointCount = 320;
+  const double low = std::log(40.0);
+  const double high = std::log(18000.0);
+  capture.points.reserve(pointCount);
+  for (int i = 0; i < pointCount; ++i) {
+    const double ratio = static_cast<double>(i) / (pointCount - 1);
+    const double frequency = std::exp(low + (high - low) * ratio);
+    double level = 0.0;
+    if (reference) {
+      // This moderate, regularly spaced detail creates excess energy mainly
+      // within the first 1-2 ms. The established 5/10 ms checks alone allow
+      // too much of it, so it is the compact-ringing regression fixture.
+      level = 3.0 * (ratio - 0.5) + 2.0 * std::sin(i * 0.4);
+    }
+    capture.points.push_back({frequency, level, 1.0, 0.0});
+  }
+  return capture;
+}
+
 double modelTotalVariation(const tonetrace::CorrectionModel& model) {
   double result = 0.0;
   for (std::size_t i = 1; i < model.nodes.size(); ++i) {
@@ -1099,13 +1125,13 @@ void testVoiceSafetyFallback() {
                 modelTotalVariation(legacyRough) * 0.75,
             "Voice safety did not withdraw suspicious narrow detail");
 
-    // This fixture deliberately reaches the IR-tail stage. Once the original
-    // full-detail curve has failed the roughness gate, becoming smoother alone
-    // must not let an intermediate candidate bypass the tail check. The first
-    // candidate that passes both canonical-rate IR checks is 10% detail.
+    // This severe fixture deliberately reaches the IR-tail stage. Once the
+    // original full-detail curve has failed the roughness gate, becoming
+    // smoother alone must not let an intermediate candidate bypass either the
+    // early or late tail checks. Its only safe result is the broad fallback.
     auto expectedSafeSettings = settings;
     expectedSafeSettings.enableVoiceSafety = false;
-    expectedSafeSettings.voiceDetailScale = 0.10;
+    expectedSafeSettings.voiceDetailScale = 0.0;
     const auto expectedSafe =
         engine.match(roughReference, roughTarget, expectedSafeSettings);
     require(expectedSafe.nodes.size() == safeRough.nodes.size(),
@@ -1118,6 +1144,43 @@ void testVoiceSafetyFallback() {
     }
     require(strictTailResidual < 1.0e-10,
             "Voice safety allowed a smoother but IR-unsafe intermediate candidate");
+
+    // A less severe fixture concentrates its suspicious energy before 5 ms.
+    // Preserve the highest detail candidate that passes the new 1/2 ms checks:
+    // 25% remains unsafe, while 10% is accepted at both diagnostic rates.
+    const auto earlyReference =
+        syntheticEarlyRingVoiceSpectrum(true, sampleRate);
+    const auto earlyTarget =
+        syntheticEarlyRingVoiceSpectrum(false, sampleRate);
+    const auto safeEarly = engine.match(earlyReference, earlyTarget, settings);
+    auto expectedEarlySettings = settings;
+    expectedEarlySettings.enableVoiceSafety = false;
+    expectedEarlySettings.voiceDetailScale = 0.10;
+    const auto expectedEarly =
+        engine.match(earlyReference, earlyTarget, expectedEarlySettings);
+    require(safeEarly.nodes.size() == expectedEarly.nodes.size(),
+            "Voice early-tail fixture changed node count");
+    double earlyTailResidual = 0.0;
+    for (std::size_t i = 0; i < safeEarly.nodes.size(); ++i) {
+      earlyTailResidual = std::max(
+          earlyTailResidual,
+          std::abs(safeEarly.nodes[i].gainDb - expectedEarly.nodes[i].gainDb));
+    }
+    require(earlyTailResidual < 1.0e-10,
+            "Voice safety did not suppress compact 1-2 ms ringing detail");
+
+    const auto safeEarlyInverse =
+        engine.match(earlyTarget, earlyReference, settings);
+    require(safeEarlyInverse.nodes.size() == safeEarly.nodes.size(),
+            "Voice early-tail inverse uses a different node count");
+    double earlyInverseResidual = 0.0;
+    for (std::size_t i = 0; i < safeEarly.nodes.size(); ++i) {
+      earlyInverseResidual = std::max(
+          earlyInverseResidual,
+          std::abs(safeEarly.nodes[i].gainDb + safeEarlyInverse.nodes[i].gainDb));
+    }
+    require(earlyInverseResidual < 1.0e-10,
+            "Voice early-tail safety broke Reference/Target sign symmetry");
 
     const auto safeInverse = engine.match(roughTarget, roughReference, settings);
     require(safeInverse.nodes.size() == safeRough.nodes.size(),

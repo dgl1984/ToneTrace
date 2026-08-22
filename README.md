@@ -14,8 +14,8 @@ Tone Trace EQ is a free match EQ from **Lanes Audio** and ships as a CLAP plug-i
 
 ## Download and install
 
-The supported 1.0.0 binary release is **Windows 10/11 x64**. Download the one
-release asset named `ToneTrace_EQ_1.0.0_Windows_x64.zip`, extract it, and copy
+The 1.0.1 binary release is **Windows 10/11 x64**. Download the one
+release asset named `ToneTrace_EQ_1.0.1_Windows_x64.zip`, extract it, and copy
 `plugins\clap\Tone Trace EQ.clap` to:
 
 `C:\Program Files\Common Files\CLAP\`
@@ -25,7 +25,7 @@ documentation, licenses, and `docs\BUILD_MANIFEST.txt` with a SHA-256 hash for
 every packaged file. It contains no installer, developer tools, tests, or debug
 symbols, and it changes nothing until you copy the `.clap` file.
 
-Source builds are possible on other C++20 platforms, but 1.0.0 does not claim a
+Source builds are possible on other C++20 platforms, but 1.0.1 does not claim a
 supported non-Windows binary release or native non-Windows custom editor.
 
 ## The one rule to remember
@@ -83,8 +83,8 @@ Tone Trace 1.0 ships as **CLAP**.
 The Windows CLAP build includes the native accessible editor. The custom editor
 is Windows-only; non-Windows source builds use the host's CLAP parameter view.
 
-Version 1.0.0 has one release asset:
-`ToneTrace_EQ_1.0.0_Windows_x64.zip`. Per-file SHA-256 hashes are stored inside
+Version 1.0.1 has one release asset:
+`ToneTrace_EQ_1.0.1_Windows_x64.zip`. Per-file SHA-256 hashes are stored inside
 that ZIP in `docs/BUILD_MANIFEST.txt`.
 
 ## Tone Trace is an EQ matcher, not a limiter
@@ -100,7 +100,7 @@ Exported IRs remain linear and do not include the Emergency Clip Guard. If the f
 - **[GUI_DESIGN.md](GUI_DESIGN.md)** — native editor and accessibility design.
 - **[plugins/README.md](plugins/README.md)** — wrapper implementation and host-boundary details.
 - **[CHANGELOG.md](CHANGELOG.md)** — versioned user-visible changes.
-- **[RELEASE_NOTES.md](RELEASE_NOTES.md)** — exact 1.0.0 asset contents and release checks.
+- **[RELEASE_NOTES.md](RELEASE_NOTES.md)** — exact 1.0.1 asset contents and release checks.
 - **[RELEASING.md](RELEASING.md)** — deterministic build, verification, tag, and upload procedure.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — build, testing, and accessibility invariants for changes.
 - **[SECURITY.md](SECURITY.md)** — private vulnerability-reporting policy.
@@ -125,7 +125,7 @@ It does not install or replace plug-ins on the machine.
 ### Other platforms
 
 `CMakePresets.json` contains macOS universal and Linux verification presets for
-developers. There is no 1.0.0 macOS/Linux release builder or supported binary
+developers. There is no 1.0.1 macOS/Linux release builder or supported binary
 asset, and the custom native editor remains Windows-only.
 
 ### Developer path
@@ -143,7 +143,7 @@ The Makefile and CMake paths build the same CLAP wrapper and shared engine used 
 
 Version **1.0.0** is the first stable public source release. Automated coverage includes the matching engine, WAV/model round trips, real-time renderer, project-state validation, CLAP workflow, balanced band-page layout, accessibility-facing parameter behavior, and malformed-state rejection.
 
-The release also preserves a last-known-good correction when a replacement capture or state fails validation. Raw capture audio is never serialized into the project state.
+The release also preserves a last-known-good correction when a replacement capture or saved state fails validation. Raw captured audio is never stored in the project.
 
 Host and OS combinations can still expose integration bugs, so useful reports should include the plug-in format, host/version, operating system, and the exact workflow step involved.
 

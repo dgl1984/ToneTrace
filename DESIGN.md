@@ -23,16 +23,16 @@ are deliberately final audio assets rather than the only saved representation.
 
 ## Current analysis path
 
-1. Reject frames substantially below the capture's useful peak level.
-2. Analyze accepted frames with an 85 ms Hann-windowed FFT and 50 percent hop.
+1. Reject audio substantially below the capture's useful peak level.
+2. Analyze accepted audio in overlapping 85 ms windows.
 3. Average left and right channel power without summing the channels, avoiding
    cancellation from stereo phase differences.
-4. Accumulate a mode-dependent generalized power statistic. Voice uses a
-   1.5-power mean: recurring speech energy matters more than quiet frames,
-   without allowing one loud pitched phrase to dominate the capture.
-5. Estimate the standard error of that statistic and convert it to
-   per-frequency confidence.
-6. Sample the result on an ERB-spaced perceptual grid.
+4. Combine repeated measurements according to the selected mode. Voice favors
+   recurring speech energy over quiet frames without allowing one loud pitched
+   phrase to dominate the capture.
+5. Measure how consistent each frequency region is and turn that into a
+   confidence value.
+6. Sample the result on a perceptually spaced frequency grid.
 7. Remove broad level difference so matching cannot create an alarming global
    volume jump; Correction Gain remains a separate control.
 8. Subtract Target from Reference and build the broad tonal correction.
@@ -41,11 +41,12 @@ are deliberately final audio assets rather than the only saved representation.
    attenuated without converting a one-off room event into permanent EQ.
 10. In Voice mode, test the full-detail result for suspicious dense narrow
     structure. Benign curves pass unchanged. A suspicious curve is compared
-    against the broad-only minimum-phase result using sign-symmetric late-IR
-    energy measured at a fixed 48 kHz diagnostic rate, then only the
-    resonance-restoration layer is progressively reduced
-    until the excess tail is acceptable. Other modes retain their historical
-    full-detail matching behavior.
+    with the broad-only result by checking how quickly the forward and reverse
+    impulse responses decay after 1, 2, 5, and 10 ms. The check runs at both
+    44.1 and 48 kHz so it behaves consistently across the two common sample-rate
+    families. Only the narrow resonant detail is progressively reduced until
+    every checkpoint passes. Other modes keep their full-detail matching
+    behavior.
 11. Recenter broad level, confidence-shape the result, and enforce the
     correction ceiling. The conservative default is 18 dB, while an explicit
     opt-in value up to 60 dB supports extreme restoration curves. It limits
@@ -54,7 +55,7 @@ are deliberately final audio assets rather than the only saved representation.
 The plug-in exposes that choice rather than silently imposing the default. A
 normal 18 dB starting point serves routine material; a clearly named
 Full Correction Range setting bypasses the user-set Maximum Correction ceiling and permits the entire supported learned curve up to the
-60 dB numerical guard. The guard protects finite model and IR arithmetic. It is
+60 dB numerical guard. The guard keeps model and impulse-response calculations valid. It is
 not a limiter, a recommended boost, or permission to hide downstream gain.
 
 Correction Range Low and High are non-destructive render masks over the learned
@@ -96,8 +97,8 @@ returns to Learn Target, and a rejected Freeze returns to Correct Target so no
 command can trap the user in an unusable state. Reset requires Arm followed by
 Confirm and can be cancelled.
 
-Serialized project state never contains live learning. A valid last-known-good
-profile is serialized Frozen; otherwise it is Ready, and loading never resumes
+Saved project state never contains live learning. A valid last-known-good
+profile is stored as Frozen; otherwise it is Ready, and loading never resumes
 capture. A generic CLAP state-save callback cannot distinguish an explicit user
 save from host undo/autosave bookkeeping, so taking a snapshot must not mutate
 or cancel the live instance. The explicit Freeze command ends live learning.
@@ -111,30 +112,29 @@ controls rerender the retained high-resolution model without rematching. Match
 Mode is the intentional exception: after Correct/Freeze it rematches the retained
 Reference and Target spectra under the newly selected mode, so users can compare
 mode-specific smoothing, point density and Voice safety without recording the pair
-again. Raw capture audio is not serialized, so a restored project performs this
+again. Raw capture audio is not stored, so a restored project performs this
 comparison from the retained spectra rather than replaying a different capture
 gate over the original recording.
 
 ## Current rendering path
 
-The minimum-phase renderer samples the correction model at the requested sample
-rate, converts log magnitude to a causal real cepstrum, and reconstructs a
-minimum-phase impulse. This avoids pre-ringing and makes direct IR export native
-at every supported rate rather than relying on resampling a 48 kHz master.
+The renderer turns the learned frequency curve into a minimum-phase impulse
+response at the requested sample rate. This avoids pre-ringing and lets Tone
+Trace export an impulse response directly at every supported rate rather than
+resampling a 48 kHz master.
 An exported IR never extrapolates correction beyond the highest frequency that
 the original captures could analyze.
 
-The exported 32-bit float coefficients are the canonical internal kernel, not
-a lower-precision copy of a hidden double-precision IR. Saving and reloading a
-direct IR therefore preserves every coefficient exactly. Convolving the same
-source with the internal kernel and the saved IR must produce a zero-sample
-null in the reference implementation. A partitioned real-time wrapper may
-accumulate insignificant floating-point ordering differences, but it must pass
-an equivalent null threshold and preserve the same latency and gain.
+The exported 32-bit impulse-response samples are the same samples used by the
+live processor, not a lower-quality copy. Saving and reloading a direct impulse
+response therefore preserves every sample exactly. Comparing the live filter
+with the saved impulse response should cancel to silence in the reference
+implementation. Real-time processing may introduce insignificant rounding
+differences, but it must preserve the same latency and gain.
 
-The first plug-in prototype can use this same kernel so a direct IR and the live
-processor agree. A compact IIR renderer may be evaluated later, but it must pass
-the same audio and CPU tests before replacing or supplementing the FIR path.
+The plug-in uses this same filter data so a direct impulse response and the live
+processor agree. A more compact filter may be evaluated later, but it must pass
+the same audio and CPU tests before replacing or supplementing the current path.
 
 ## Quality gate before plug-in wrappers
 

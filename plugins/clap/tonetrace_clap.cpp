@@ -268,6 +268,14 @@ struct CaptureBuffer {
     previousBandAggregate = {};
   }
 
+  void release() noexcept {
+    for (auto& channel : channels) {
+      std::vector<float>().swap(channel);
+    }
+    capacityFrames = 0;
+    reset();
+  }
+
   void append(const float* const* input,
               std::size_t inputChannels,
               std::size_t count,
@@ -2032,6 +2040,19 @@ class ToneTraceClap {
     instance->pendingImportKind_.store(0, std::memory_order_release);
     instance->controlBusy_.store(false, std::memory_order_release);
     instance->core_.reset();
+    // Captures are rebuilt on every activation and are never part of project
+    // state. Release their potentially large 30-second stereo allocations as
+    // soon as the host deactivates the instance instead of retaining roughly
+    // 23 MB at 48 kHz (and proportionally more at high sample rates).
+    instance->reference_.release();
+    instance->target_.release();
+    for (auto& channel : instance->scratchInput_) {
+      std::vector<float>().swap(channel);
+    }
+    for (auto& channel : instance->scratchOutput_) {
+      std::vector<float>().swap(channel);
+    }
+    instance->maxFrames_ = 0;
   }
 
   static bool CLAP_ABI pluginStartProcessing(const clap_plugin_t* plugin) noexcept {

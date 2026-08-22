@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <cwchar>
 #include <filesystem>
 #include <iostream>
 #include <random>
@@ -255,6 +256,70 @@ struct PluginInstance {
     return result;
   }
 };
+
+#if defined(_WIN32)
+void verifyPrecisionTouchpadBandDrag(const clap_plugin_t* plugin) {
+  const auto* gui = static_cast<const clap_plugin_gui_t*>(
+      plugin->get_extension(plugin, CLAP_EXT_GUI));
+  require(gui != nullptr &&
+              gui->is_api_supported(plugin, CLAP_WINDOW_API_WIN32, false) &&
+              gui->create(plugin, CLAP_WINDOW_API_WIN32, false),
+          "Win32 editor could not be created for pointer testing");
+
+  HWND hostWindow = CreateWindowExW(
+      0, L"STATIC", L"Tone Trace pointer test host", WS_OVERLAPPEDWINDOW,
+      CW_USEDEFAULT, CW_USEDEFAULT, 1100, 760, nullptr, nullptr,
+      GetModuleHandleW(nullptr), nullptr);
+  require(hostWindow != nullptr, "pointer test host window could not be created");
+  clap_window_t parent{};
+  parent.api = CLAP_WINDOW_API_WIN32;
+  parent.win32 = hostWindow;
+  require(gui->set_parent(plugin, &parent),
+          "Win32 editor could not attach to the pointer test host");
+
+  HWND bandFader = nullptr;
+  EnumChildWindows(
+      hostWindow,
+      [](HWND child, LPARAM context) -> BOOL {
+        if (GetDlgCtrlID(child) == 2000) {
+          *reinterpret_cast<HWND*>(context) = child;
+          return FALSE;
+        }
+        return TRUE;
+      },
+      reinterpret_cast<LPARAM>(&bandFader));
+  require(bandFader != nullptr,
+          "the first band fader was not present in the Win32 editor");
+
+  RECT bounds{};
+  GetClientRect(bandFader, &bounds);
+  const int x = (bounds.left + bounds.right) / 2;
+  const int bottom = std::max(bounds.top, bounds.bottom - 35);
+  const int top = std::min(bounds.bottom - 1, bounds.top + 12);
+  SendMessageW(bandFader, WM_LBUTTONDOWN, MK_LBUTTON,
+               MAKELPARAM(x, bottom));
+  require(GetCapture() == bandFader,
+          "band fader did not capture its pointer on press");
+  wchar_t pressedValue[128]{};
+  GetWindowTextW(bandFader, pressedValue,
+                 static_cast<int>(std::size(pressedValue)));
+
+  // Precision touchpads can omit MK_LBUTTON from a synthesized move while the
+  // window still owns capture. That move must continue the active fader drag.
+  SendMessageW(bandFader, WM_MOUSEMOVE, 0, MAKELPARAM(x, top));
+  wchar_t draggedValue[128]{};
+  GetWindowTextW(bandFader, draggedValue,
+                 static_cast<int>(std::size(draggedValue)));
+  require(std::wcscmp(pressedValue, draggedValue) != 0,
+          "captured touchpad move without MK_LBUTTON did not move the band fader");
+
+  SendMessageW(bandFader, WM_LBUTTONUP, 0, MAKELPARAM(x, top));
+  require(GetCapture() != bandFader,
+          "band fader retained pointer capture after release");
+  gui->destroy(plugin);
+  DestroyWindow(hostWindow);
+}
+#endif
 
 template <typename Sample>
 void process(const clap_plugin_t* plugin,
@@ -996,6 +1061,18 @@ void run(const char* modulePath,
     instance.plugin->stop_processing(instance.plugin);
     instance.plugin->deactivate(instance.plugin);
 
+    // Deactivation releases the large raw capture/scratch allocations. The
+    // same instance must still be able to allocate fresh buffers, restore its
+    // last-known-good profile, and resume normally on a later activation.
+    require(instance.plugin->activate(instance.plugin, 48000.0, 1, 16384) &&
+                instance.plugin->start_processing(instance.plugin),
+            "deactivated instance could not reactivate after buffer release");
+    require(instance.parameter(kStatus) == 5.0 &&
+                instance.latency->get(instance.plugin) == 0,
+            "reactivated instance did not restore its Frozen zero-latency profile");
+    instance.plugin->stop_processing(instance.plugin);
+    instance.plugin->deactivate(instance.plugin);
+
     PluginInstance modeRestored(
         factory->create_plugin(factory, &host.host, descriptor->id));
     MemoryInput modeSwitchInput(modeSwitchSaved.bytes);
@@ -1102,6 +1179,9 @@ void run(const char* modulePath,
     processCommand(restored.plugin, 4);
     require(restored.parameter(kStatus) == 5.0,
             "last-known-good correction could not be frozen after rejection");
+#if defined(_WIN32)
+    verifyPrecisionTouchpadBandDrag(restored.plugin);
+#endif
 
     processCommand(restored.plugin, 5);
     require(restored.parameter(kStatus) == 6.0, "reset was not armed");
