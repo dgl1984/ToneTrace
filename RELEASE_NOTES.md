@@ -1,35 +1,49 @@
-# Tone Trace EQ 1.0.1 release notes
+# Tone Trace EQ 1.0.2 release notes
 
-Tone Trace EQ 1.0.1 is a Windows CLAP maintenance release. It keeps the 1.0.0
-state, keyboard, and screen-reader contracts while correcting band-fader
-dragging for Windows precision touchpads and improving Voice-mode safety.
+Tone Trace EQ 1.0.2 is a focused Windows CLAP editor and usability update. It
+preserves the 1.0.1 matching DSP, capture workflow, realtime renderer, saved-
+state format, parameter IDs/order, and established keyboard path.
+
+## Added
+
+- Holding Shift while turning the mouse wheel over a band fader moves 6 dB per
+  notch, matching Page Up / Page Down. The plain wheel remains a 1 dB step.
+- Hovering the Match graph shows the frequency under the pointer in a small
+  visual label. The existing readout continues to provide the same frequency
+  and curve values and remains the accessible source of that information.
+- A Windows UI regression harness now checks the established Match-page tab
+  order, band keyboard and mouse interaction, native-control roles, and layout
+  at 100%, 125%, and 150% display scales.
 
 ## Fixed
 
-- Band faders now respond reliably to tap-and-drag gestures from Windows
-  precision touchpads.
-- The editor's window, text, controls, and minimum size now scale together in
-  hosts that provide a Windows display scale.
-- The first audio block can no longer overlap initial correction preparation,
-  and a failed or oversized realtime correction leaves the last good state
-  alone.
-- Enter now applies typed Match-page values, and Copy Curve Description copies
-  the complete text.
-- Automated testing now covers captured-pointer dragging in the Windows editor
-  control, host-provided scaling before and after attachment, and the first
-  audio-block handoff.
-- The 20 kHz label now remains fully visible at the right edge of the Match
-  graph.
-- Voice mode now catches very short ringing that could slip past its existing
-  safeguard. Normal Voice matches and all other modes remain unchanged.
-- Temporary recording memory is released when the host deactivates Tone Trace.
-  Saved corrections still restore normally when it is activated again.
+- A new plug-in instance now starts in **Voice** Match Mode. Existing projects
+  still restore their saved mode.
+- The natural-language summary edit now exposes **Curve Description** as its
+  native accessible name instead of inheriting an unrelated nearby label.
+- Manual band edits now work before any Reference/Target profile has been
+  learned, so the Bands pages can function immediately as a standalone graphic
+  EQ as documented.
+- The declared minimum editor size is now 740 x 500 at 100% display scale. The
+  width preserves the existing 64 px minimum for all seven Match-page value
+  fields instead of squeezing them narrower, while the height leaves useful
+  pointer travel on the vertical band faders.
+- In Trace Curve mode the graph's +/- dB range label no longer overlaps the
+  TRACE badge.
+
+## Deliberately unchanged
+
+This update does not change the Tone Trace matching DSP, capture workflow,
+stopped-transport command handling, tone-worker behavior, saved-state format,
+parameter IDs/order, or the existing REAPER/NVDA focus and keyboard path. The
+only parameter-default change is the intentional Full Mix-to-Voice starting
+mode described above.
 
 ## Release asset
 
 The release has one binary asset:
 
-`ToneTrace_EQ_1.0.1_Windows_x64.zip`
+`ToneTrace_EQ_1.0.2_Windows_x64.zip`
 
 The ZIP contains:
 
@@ -62,13 +76,19 @@ Removing the copied `.clap` file uninstalls Tone Trace.
 - Large learned boosts still require headroom. The Emergency Clip Guard is a
   safety ceiling, not a mastering limiter, and exported IRs do not contain it.
 
-## Validation performed
+## Validation before publication
 
-- Complete 64-bit Windows release build.
-- Automated tests for matching, real-time playback, saved projects, layout,
-  and host communication.
-- Windows editor-control tests for captured-pointer dragging, scaled sizing and
-  fonts, typed-value commits, and pointer release.
-- Automated layout checks across Match and the Bands tabs, including changing
-  band counts and balanced page ranges.
-- Package-content verification after ZIP creation.
+The 1.0.2 package should not be published until the exact Windows build passes:
+
+- all registered CTest tests, including the Win32 UI regression harness;
+- a REAPER/NVDA smoke test confirming the description field is announced as
+  **Curve Description** and the established keyboard behavior is unchanged;
+- a fresh-instance check confirming Match Mode starts in Voice and a saved
+  Full Mix project still restores as Full Mix;
+- a pre-capture band edit confirming Up changes a band to +1.0 dB and `0`
+  returns it to neutral;
+- mouse or precision-touchpad click, drag, wheel, Shift+wheel, and double-click
+  checks on several band faders;
+- a visual check at default size and the declared minimum at 100%, 125%, and
+  150% display scaling;
+- package-content and build-manifest verification.

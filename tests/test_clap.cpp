@@ -277,7 +277,7 @@ void verifyPrecisionTouchpadBandDrag(const clap_plugin_t* plugin) {
   uint32_t minimumWidth = 1;
   uint32_t minimumHeight = 1;
   require(gui->adjust_size(plugin, &minimumWidth, &minimumHeight) &&
-              minimumWidth == 800 && minimumHeight == 500,
+              minimumWidth == 925 && minimumHeight == 625,
           "Win32 editor did not scale its minimum physical size");
 
   HWND hostWindow = CreateWindowExW(
@@ -780,11 +780,16 @@ void run(const char* modulePath,
             "ready plugin must be zero latency with no tail");
     require(instance.parameter(kToneNotifications) == 1.0,
             "confidence tones are not enabled by default");
+    require(instance.parameter(kMatchMode) == 1.0,
+            "a fresh plug-in instance does not start in Voice Match Mode");
 
     require(instance.plugin->activate(instance.plugin, 48000.0, 1, 16384),
             "activation failed");
     require(instance.plugin->start_processing(instance.plugin),
             "start processing failed");
+    // The remaining mode-switch tests use Full Mix as their explicit baseline
+    // so they continue to compare the same correction curves as before.
+    processParameter(instance.plugin, kMatchMode, 0.0);
 
     {
       std::array<std::vector<float>, 2> input{

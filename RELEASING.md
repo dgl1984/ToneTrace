@@ -34,7 +34,7 @@ The required output is:
 
 The build is releasable only when all of these are true:
 
-- the build log reports four of four tests passed;
+- the build log reports all registered tests passed;
 - the build log contains no compiler warning or error;
 - the ZIP opens and contains only the package root plus `plugins/`, `docs/`,
   `licenses/`, and `LICENSE`;

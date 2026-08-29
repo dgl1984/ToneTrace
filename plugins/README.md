@@ -8,7 +8,7 @@ The plug-in uses the official CLAP 1.2.10 interface and supports stereo audio, t
 
 On Windows it also ships the native Win32 editor designed for keyboard and screen-reader use. The per-band trace surface keeps native readonly edits for exact dB/NVDA reporting, but custom-paints those same controls as vertical graphic-EQ faders for sighted users and supports mouse dragging. Band pages use the full editor width, prefer at most 10 bands per page, and rebalance odd totals instead of leaving a tiny final tab. The default 30-band layout is 10 + 10 + 10; 60 bands is six predictable 10-band pages.
 
-A mock CLAP host tests discovery, lifecycle, host-event and `params.flush` delivery, audio, accessibility text, partial streams, restoration, full-capture fallback, and malformed state. A separate layout regression test protects the balanced paging rule.
+A mock CLAP host tests discovery, lifecycle, host-event and `params.flush` delivery, audio, accessibility text, fresh-instance defaults, partial streams, restoration, full-capture fallback, and malformed state. Windows regressions also protect the Curve Description accessible label, band controls, and balanced paging rule.
 
 CLAP headers are vendored under `third_party/clap` with the upstream license notice. Nothing is downloaded during a normal build.
 

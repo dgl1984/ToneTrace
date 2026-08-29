@@ -768,6 +768,30 @@ class ToneTraceClap {
     return settings;
   }
 
+  [[nodiscard]] bool manualCorrectionActive() const noexcept {
+    if (std::abs(value(tonetrace::ParameterId::CorrectionGainDb)) > 1.0e-12) {
+      return true;
+    }
+    return std::any_of(manualGains_.begin(), manualGains_.end(),
+                       [](double gain) {
+                         return std::isfinite(gain) &&
+                                std::abs(gain) > 1.0e-12;
+                       });
+  }
+
+  void updateManualOnlyTail() noexcept {
+    if (!manualCorrectionActive()) {
+      tailFrames_.store(0, std::memory_order_release);
+      return;
+    }
+    const double frames = 0.18 * static_cast<double>(sampleRate_);
+    tailFrames_.store(
+        static_cast<std::uint32_t>(std::clamp(
+            frames, 0.0,
+            static_cast<double>(std::numeric_limits<std::uint32_t>::max()))),
+        std::memory_order_release);
+  }
+
   // Manual band trims must have exactly one entry per trace band. When the
   // user changes Correction Resolution, preserve the trim CURVE by frequency
   // instead of copying indices (which would move edits to different bands).
@@ -795,9 +819,7 @@ class ToneTraceClap {
   void setBandGain(std::size_t index, double gainDb) noexcept {
     if (index >= manualGains_.size() || !std::isfinite(gainDb)) return;
     manualGains_[index] = std::clamp(gainDb, -120.0, 120.0);
-    if (hasProfile_.load(std::memory_order_acquire)) {
-      requestMainThread(WorkRebuild);
-    }
+    requestMainThread(WorkRebuild);
   }
 
   [[nodiscard]] double getBandGain(std::size_t index) const noexcept {
@@ -1185,6 +1207,14 @@ class ToneTraceClap {
       // learned correction.
     } else if (hasProfile_.load(std::memory_order_acquire)) {
       requestMainThread(WorkRebuild);
+    } else if (parameterId == tonetrace::ParameterId::Resolution ||
+               parameterId == tonetrace::ParameterId::CorrectionGainDb ||
+               parameterId == tonetrace::ParameterId::RangeLowHz ||
+               parameterId == tonetrace::ParameterId::RangeHighHz) {
+      if (parameterId == tonetrace::ParameterId::Resolution) {
+        syncManualGainsSize();
+      }
+      requestMainThread(WorkRebuild);
     }
     return true;
   }
@@ -1525,7 +1555,21 @@ class ToneTraceClap {
   }
 
   void rebuildCorrection() {
-    if (core_ == nullptr || core_->frozenSnapshot() == nullptr) return;
+    if (core_ == nullptr) return;
+    if (core_->frozenSnapshot() == nullptr) {
+      const auto result = core_->commitManualCorrection(currentRenderSettings());
+      if (!result.accepted) {
+        if (result.issue == tonetrace::ProfileIssue::RendererBusy) {
+          requestMainThread(WorkRebuild);
+        } else {
+          setStatus(Status::AnalysisFailed);
+          requestWarningSweep();
+        }
+        return;
+      }
+      updateManualOnlyTail();
+      return;
+    }
     auto candidate = *core_->frozenSnapshot();
 
     // Reference/Target analysis is intentionally retained at high internal
@@ -1761,9 +1805,17 @@ class ToneTraceClap {
                                                      std::memory_order_acq_rel);
     try {
       if ((work & WorkReset) != 0U) {
-        if (core_ != nullptr) core_->clearProfile();
+        std::fill(manualGains_.begin(), manualGains_.end(), 0.0);
+        setValue(tonetrace::ParameterId::CorrectionGainDb, 0.0, true);
+        if (core_ != nullptr) {
+          const auto resetResult =
+              core_->commitManualCorrection(currentRenderSettings());
+          if (!resetResult.accepted) {
+            throw std::runtime_error(resetResult.message);
+          }
+        }
         hasProfile_.store(false, std::memory_order_release);
-        tailFrames_.store(0, std::memory_order_release);
+        updateManualOnlyTail();
         importedReference_.reset();
         importedTarget_.reset();
         stagedReferenceForExport_.reset();
@@ -1807,7 +1859,7 @@ class ToneTraceClap {
   std::string saveWrapperState() const {
     std::ostringstream stream;
     stream.precision(std::numeric_limits<double>::max_digits10);
-    stream << "ToneTraceClapState 2\n";
+    stream << "ToneTraceClapState 3\n";
     const auto& descriptors = tonetrace::parameterDescriptors();
     std::size_t persisted = 0;
     for (const auto& descriptor : descriptors) {
@@ -1827,6 +1879,10 @@ class ToneTraceClap {
     }
     const std::string state = coreState();
     stream << "tracedisplay " << (displayStatic_ ? 1 : 0) << '\n';
+    stream << "manualgains " << manualGains_.size() << '\n';
+    for (const double gain : manualGains_) {
+      stream << "manualgain " << gain << '\n';
+    }
     stream << "core " << state.size() << '\n';
     stream.write(state.data(), static_cast<std::streamsize>(state.size()));
     return stream.str();
@@ -1841,7 +1897,7 @@ class ToneTraceClap {
     int version = 0;
     stream >> token >> version;
     if (!stream || token != "ToneTraceClapState" ||
-        (version != 1 && version != 2)) {
+        (version != 1 && version != 2 && version != 3)) {
       return false;
     }
     std::size_t count = 0;
@@ -1874,6 +1930,22 @@ class ToneTraceClap {
       }
       restoredDisplayStatic = displayValue != 0;
     }
+    std::vector<double> restoredManualGains;
+    if (version >= 3) {
+      std::size_t gainCount = 0;
+      stream >> token >> gainCount;
+      if (!stream || token != "manualgains" || gainCount > 256) return false;
+      restoredManualGains.reserve(gainCount);
+      for (std::size_t i = 0; i < gainCount; ++i) {
+        double gain = 0.0;
+        stream >> token >> gain;
+        if (!stream || token != "manualgain" || !std::isfinite(gain) ||
+            std::abs(gain) > 120.0) {
+          return false;
+        }
+        restoredManualGains.push_back(gain);
+      }
+    }
     std::size_t coreBytes = 0;
     stream >> token >> coreBytes;
     if (!stream || token != "core" || coreBytes > kMaximumStateBytes) return false;
@@ -1891,6 +1963,8 @@ class ToneTraceClap {
       values_[index]->store(restored, std::memory_order_release);
     }
     displayStatic_ = restoredDisplayStatic;
+    manualGains_ = std::move(restoredManualGains);
+    syncManualGainsSize();
     setValue(tonetrace::ParameterId::WorkflowAction, 0.0);
     lastWorkflowStep_.store(0, std::memory_order_release);
     if (restoredProject.phase == tonetrace::WorkflowPhase::Frozen &&
@@ -2011,6 +2085,12 @@ class ToneTraceClap {
       instance->core_->setBypassed(
           instance->value(tonetrace::ParameterId::Bypass) >= 0.5);
       instance->syncManualGainsFromSnapshot();
+      if (!instance->hasProfile_.load(std::memory_order_acquire)) {
+        const auto manualResult =
+            instance->core_->commitManualCorrection(instance->currentRenderSettings());
+        if (!manualResult.accepted) return false;
+        instance->updateManualOnlyTail();
+      }
       instance->controlBusy_.store(false, std::memory_order_release);
       instance->active_.store(true, std::memory_order_release);
       return true;

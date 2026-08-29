@@ -7,8 +7,10 @@ target_include_directories(tonetrace-clap PRIVATE
 if(WIN32)
   target_sources(tonetrace-clap PRIVATE
     tonetrace_win32_editor.cpp
+    tonetrace_accessible_fader.cpp
     resource.rc)
-  target_link_libraries(tonetrace-clap PRIVATE user32 gdi32 comctl32)
+  target_link_libraries(tonetrace-clap PRIVATE
+    user32 gdi32 comctl32 oleacc oleaut32 uiautomationcore)
 endif()
 target_compile_features(tonetrace-clap PRIVATE cxx_std_20)
 target_compile_definitions(tonetrace-clap PRIVATE
@@ -39,4 +41,36 @@ if(TONETRACE_BUILD_TESTS)
   endif()
   install(TARGETS tonetrace-clap-tests
     RUNTIME DESTINATION diagnostics COMPONENT Development)
+
+  if(WIN32 AND BUILD_TESTING)
+    add_executable(tonetrace-win32-ui-tests
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/test_win32_ui_regression.cpp")
+    target_include_directories(tonetrace-win32-ui-tests PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/clap/include")
+    target_compile_features(tonetrace-win32-ui-tests PRIVATE cxx_std_20)
+    target_link_libraries(tonetrace-win32-ui-tests PRIVATE
+      user32 gdi32 comctl32 oleacc oleaut32 uiautomationcore)
+    tonetrace_enable_warnings(tonetrace-win32-ui-tests)
+    if(BUILD_TESTING)
+      add_test(NAME tonetrace-win32-ui
+        COMMAND tonetrace-win32-ui-tests $<TARGET_FILE:tonetrace-clap>)
+    endif()
+    install(TARGETS tonetrace-win32-ui-tests
+      RUNTIME DESTINATION diagnostics COMPONENT Development)
+
+    add_executable(tonetrace-win32-a11y-tests
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/test_win32_accessibility_regression.cpp")
+    target_include_directories(tonetrace-win32-a11y-tests PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/clap/include")
+    target_compile_features(tonetrace-win32-a11y-tests PRIVATE cxx_std_20)
+    target_link_libraries(tonetrace-win32-a11y-tests PRIVATE
+      user32 gdi32 comctl32 oleacc oleaut32 uiautomationcore)
+    tonetrace_enable_warnings(tonetrace-win32-a11y-tests)
+    if(BUILD_TESTING)
+      add_test(NAME tonetrace-win32-a11y
+        COMMAND tonetrace-win32-a11y-tests $<TARGET_FILE:tonetrace-clap>)
+    endif()
+    install(TARGETS tonetrace-win32-a11y-tests
+      RUNTIME DESTINATION diagnostics COMPONENT Development)
+  endif()
 endif()

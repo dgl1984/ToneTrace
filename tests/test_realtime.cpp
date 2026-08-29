@@ -138,6 +138,12 @@ void testParameterContract() {
     require(parameters[index].name == expectedOrder[index],
             "The frozen accessible parameter order changed");
   }
+  const auto mode = std::find_if(
+      parameters.begin(), parameters.end(), [](const auto& parameter) {
+        return parameter.id == tonetrace::ParameterId::MatchMode;
+      });
+  require(mode != parameters.end() && mode->defaultValue == 1.0,
+          "A fresh instance no longer starts in Voice Match Mode");
   std::cout << "stable generic parameter inventory: passed\n";
 }
 
@@ -533,6 +539,65 @@ void testHeadlessPluginCore() {
   std::cout << "headless host adapter, last-known-good, and state restore: passed\n";
 }
 
+void testManualOnlyGraphicEq() {
+  tonetrace::RealtimeConvolverConfig config;
+  config.sampleRate = 48000;
+  config.channels = 1;
+  tonetrace::HeadlessPluginCore core(config);
+
+  tonetrace::IrRenderSettings settings;
+  settings.sampleRate = config.sampleRate;
+  settings.durationSeconds = 0.02;
+  settings.rangeLowHz = 20.0;
+  settings.rangeHighHz = 20000.0;
+  settings.manualGains.assign(30, 0.0);
+  settings.manualGains[15] = 6.0;
+
+  const auto committed = core.commitManualCorrection(settings);
+  require(committed.accepted,
+          "A valid manual-only graphic EQ curve was rejected");
+  require(core.phase() == tonetrace::WorkflowPhase::Ready &&
+              core.frozenSnapshot() == nullptr,
+          "Manual-only graphic EQ incorrectly created a learned profile");
+  const auto restored =
+      tonetrace::deserializeProjectState(core.saveProjectState());
+  require(restored.phase == tonetrace::WorkflowPhase::Ready &&
+              !restored.snapshot,
+          "Manual-only graphic EQ leaked into learned-profile project state");
+
+  tonetrace::CorrectionModel flatModel;
+  flatModel.mode = tonetrace::MatchMode::FullMix;
+  flatModel.analysisLowHz = 20.0;
+  flatModel.analysisHighHz = 20000.0;
+  flatModel.resolution = 30;
+  flatModel.nodes = {{20.0, 0.0, 1.0}, {20000.0, 0.0, 1.0}};
+  const auto expected = tonetrace::renderMinimumPhaseIr(flatModel, settings);
+  std::vector<float> impulse(expected.size() + 64U, 0.0F);
+  impulse[0] = 1.0F;
+  std::vector<float> output(impulse.size(), 0.0F);
+  const float* inputs[]{impulse.data()};
+  float* outputs[]{output.data()};
+  core.process(inputs, outputs, 1, impulse.size());
+  for (std::size_t i = 0; i < expected.size(); ++i) {
+    require(std::abs(output[i] - static_cast<float>(expected[i])) < 2.0e-5F,
+            "Manual-only graphic EQ audio differs from its rendered curve");
+  }
+
+  tonetrace::HeadlessPluginCore flat(config);
+  settings.manualGains.assign(30, 0.0);
+  require(flat.commitManualCorrection(settings).accepted,
+          "A flat manual-only curve was rejected");
+  std::vector<float> dry(128, 0.125F);
+  std::vector<float> wet(dry.size(), 0.0F);
+  const float* dryIn[]{dry.data()};
+  float* wetOut[]{wet.data()};
+  flat.process(dryIn, wetOut, 1, dry.size());
+  require(std::equal(dry.begin(), dry.end(), wet.begin()),
+          "A zeroed graphic EQ did not remain bit-exact bypass");
+
+  std::cout << "manual-only graphic EQ without learned profile: passed\n";
+}
+
 void testInitialCommitProcessHandoff() {
   for (int iteration = 0; iteration < 48; ++iteration) {
     tonetrace::RealtimeConvolverConfig config;
@@ -608,6 +673,7 @@ int main() {
     testRapidKernelCoalescing();
     testAudioThreadAllocationFreedom();
     testHeadlessPluginCore();
+    testManualOnlyGraphicEq();
     testInitialCommitProcessHandoff();
     std::cout << "all Tone Trace realtime-core tests passed\n";
     return 0;

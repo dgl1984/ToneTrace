@@ -3,6 +3,33 @@
 All notable Tone Trace EQ changes are recorded here. Versions follow semantic
 versioning, and release dates use `YYYY-MM-DD`.
 
+## [1.0.2] - 2026-08-29
+
+### Added
+
+- Holding Shift while turning the mouse wheel over a band fader now moves 6 dB
+  per notch, the same coarse step as Page Up / Page Down; the plain wheel keeps
+  its 1 dB step.
+- Hovering the Match graph now shows the frequency under the cursor in a small
+  label beside the cursor line, matching the existing readout below the graph.
+- Added a Windows UI regression harness for the known-good keyboard order,
+  pointer gestures, native band controls, and minimum-size layout at 100%,
+  125%, and 150% display scales.
+
+### Fixed
+
+- New plug-in instances now start in Voice Match Mode. Saved projects continue
+  to restore the mode stored in their project state.
+- The read-only curve summary now has a real native **Curve Description** label
+  instead of allowing NVDA to borrow an unrelated neighboring label.
+- Bands can now be edited as a standalone graphic EQ before a Reference/Target
+  match exists; the native editor no longer masks those manual values at 0 dB.
+- The editor's declared minimum is now 740 x 500 at 100% scale. This keeps the
+  seven Match-page value fields at their existing 64 px minimum width and leaves
+  about 66 px of usable painted fader travel on Bands pages.
+- In Trace Curve mode the graph's +/- dB range label no longer overdraws the
+  TRACE badge in the top corner.
+
 ## [1.0.1] - 2026-08-22
 
 ### Fixed

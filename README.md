@@ -14,8 +14,8 @@ Tone Trace EQ is a free match EQ from **Lanes Audio** and ships as a CLAP plug-i
 
 ## Download and install
 
-The 1.0.1 binary release is **Windows 10/11 x64**. Download the one
-release asset named `ToneTrace_EQ_1.0.1_Windows_x64.zip`, extract it, and copy
+The 1.0.2 binary release is **Windows 10/11 x64**. Download the one
+release asset named `ToneTrace_EQ_1.0.2_Windows_x64.zip`, extract it, and copy
 `plugins\clap\Tone Trace EQ.clap` to:
 
 `C:\Program Files\Common Files\CLAP\`
@@ -25,7 +25,7 @@ documentation, licenses, and `docs\BUILD_MANIFEST.txt` with a SHA-256 hash for
 every packaged file. It contains no installer, developer tools, tests, or debug
 symbols, and it changes nothing until you copy the `.clap` file.
 
-Source builds are possible on other C++20 platforms, but 1.0.1 does not claim a
+Source builds are possible on other C++20 platforms, but 1.0.2 does not claim a
 supported non-Windows binary release or native non-Windows custom editor.
 
 ## The one rule to remember
@@ -40,7 +40,9 @@ If a dull microphone recording should sound more like a brighter microphone, cap
 ## Your first match
 
 1. Insert **Tone Trace EQ** on the track or bus that will receive both captures.
-2. Choose a Match Mode such as **Voice** or **Full Mix**.
+2. **Match Mode starts in Voice.** Leave it there for speech, vocals, or
+   microphone matching; choose **Full Mix** for complete songs and mixed
+   program material.
 3. Choose **Capture Reference** and play the sound you want to match.
 4. Choose **Learn Target**. That button first saves the Reference you just captured, then begins Target capture. If all you wanted was a reusable Reference, it is already available for export at this point.
 5. Play the sound you want to correct.
@@ -72,7 +74,11 @@ The same learned correction can also be exported as a minimum-phase impulse resp
 
 The Windows editor was designed to be usable both visually and nonvisually. The Match page is mouse-operable, the graphic-EQ bands have conventional visual faders, and the same controls remain keyboard accessible without adding extra focus stops or verbose screen-reader chatter.
 
-With NVDA, band navigation is intentionally concise. Global controls and workflow status are also exposed through the host's generic parameter interface, including workflows such as REAPER with OSARA. Optional tone notifications can provide additional nonvisual feedback and are enabled by default.
+With NVDA, band navigation is intentionally concise. The read-only curve text
+is explicitly labeled **Curve Description**, and global controls and workflow
+status are also exposed through the host's generic parameter interface,
+including workflows such as REAPER with OSARA. Optional tone notifications can
+provide additional nonvisual feedback and are enabled by default.
 
 Accessibility feedback is especially welcome at `info@lanesaudio.com`.
 
@@ -83,8 +89,8 @@ Tone Trace 1.0 ships as **CLAP**.
 The Windows CLAP build includes the native accessible editor. The custom editor
 is Windows-only; non-Windows source builds use the host's CLAP parameter view.
 
-Version 1.0.1 has one release asset:
-`ToneTrace_EQ_1.0.1_Windows_x64.zip`. Per-file SHA-256 hashes are stored inside
+Version 1.0.2 has one release asset:
+`ToneTrace_EQ_1.0.2_Windows_x64.zip`. Per-file SHA-256 hashes are stored inside
 that ZIP in `docs/BUILD_MANIFEST.txt`.
 
 ## Tone Trace is an EQ matcher, not a limiter
@@ -100,7 +106,7 @@ Exported IRs remain linear and do not include the Emergency Clip Guard. If the f
 - **[GUI_DESIGN.md](GUI_DESIGN.md)** — native editor and accessibility design.
 - **[plugins/README.md](plugins/README.md)** — wrapper implementation and host-boundary details.
 - **[CHANGELOG.md](CHANGELOG.md)** — versioned user-visible changes.
-- **[RELEASE_NOTES.md](RELEASE_NOTES.md)** — exact 1.0.1 asset contents and release checks.
+- **[RELEASE_NOTES.md](RELEASE_NOTES.md)** — exact 1.0.2 asset contents and release checks.
 - **[RELEASING.md](RELEASING.md)** — deterministic build, verification, tag, and upload procedure.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — build, testing, and accessibility invariants for changes.
 - **[SECURITY.md](SECURITY.md)** — private vulnerability-reporting policy.
@@ -125,7 +131,7 @@ It does not install or replace plug-ins on the machine.
 ### Other platforms
 
 `CMakePresets.json` contains macOS universal and Linux verification presets for
-developers. There is no 1.0.1 macOS/Linux release builder or supported binary
+developers. There is no 1.0.2 macOS/Linux release builder or supported binary
 asset, and the custom native editor remains Windows-only.
 
 ### Developer path

@@ -189,6 +189,11 @@ class HeadlessPluginCore {
 
   [[nodiscard]] ProfileValidation commitCandidate(
       const ProfileSnapshot& candidate);
+  // Installs a manual-only EQ kernel without creating a learned profile.
+  // This keeps Tone Trace usable as a graphic EQ before any Reference/Target
+  // capture has been completed.
+  [[nodiscard]] ProfileValidation commitManualCorrection(
+      const IrRenderSettings& settings);
   void clearProfile();
   [[nodiscard]] std::string saveProjectState() const;
   void loadProjectState(const std::string& bytes);

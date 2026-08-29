@@ -55,10 +55,11 @@ Canvas interactions:
 
 | Control | Role | Purpose |
 | --- | --- | --- |
+| Curve description label | STATIC | Native accessible name for the description edit; never painted-only |
 | Curve description box | READONLY multiline EDIT | Natural-language description of all curves; sole non-visual curve reading |
 | Trace/readout box | READONLY EDIT; wraps visually on band pages | Exact Hz/dB on Match; concise band-page guidance and focused-band detail |
 | Capture Reference / Learn Target / Correct / Freeze | BUTTONs | Workflow steps (mirror the CLAP WorkflowAction param); Learn Target saves the Reference first, then begins Target capture |
-| Mode | COMBOBOX (named options) | Full Mix / Voice / Drums / Bass+Synth / Custom |
+| Mode | COMBOBOX (named options) | Voice default; Full Mix / Voice / Drums / Bass+Synth / Custom |
 | Range low / high, strength, resolution, correction ceiling, etc. | exact-value EDITs | Continuous params, committed on kill-focus |
 | Phase / status | READONLY EDIT | "Capturing Reference", "Frozen", etc. |
 | Legend rows | per-curve STATIC+color swatch | Names each curve for tabbing |
@@ -68,9 +69,9 @@ Rules from the OptiLab study applied here:
 - Enumerated params → COMBOBOX with named items built from `value_to_text`.
 - Continuous params → exact-value EDIT, committed on `EN_KILLFOCUS`, parsed
   with `text_to_value`, reverted to last valid value on parse failure.
-- Every control has a real accessible name; labels use
-  `SS_LEFTNOWORDWRAP|SS_ENDELLIPSIS|SS_NOPREFIX` so names never truncate or
-  mangle ampersands.
+- Every control has a real accessible name. Labels are native STATIC controls
+  adjacent to what they name in Z-order and retain their complete text; painted
+  captions are never treated as an accessibility surface.
 - The painted canvas creates **no** accessible object; it is not a tab stop.
 - The description box and readout announce via `NotifyWinEvent` on demand only.
 - Band pages use the full editor width and prefer at most 10 bands per page. A

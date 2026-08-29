@@ -378,7 +378,7 @@ const std::vector<ParameterDescriptor>& parameterDescriptors() {
       {ParameterId::WorkflowAction, "Workflow Step", 0.0, 7.0, 0.0, "", true, false, true},
       {ParameterId::Status, "Status", 0.0, 29.0, 0.0, "", true, true, true},
       {ParameterId::LastCommand, "Last Command", 0.0, 7.0, 0.0, "", true, true, true},
-      {ParameterId::MatchMode, "Match Mode", 0.0, 4.0, 0.0, "", true, false, true},
+      {ParameterId::MatchMode, "Match Mode", 0.0, 4.0, 1.0, "", true, false, true},
       {ParameterId::MaximumCorrectionDb, "Maximum Correction", 1.0, 60.0, 18.0, "dB", true, false, false},
       {ParameterId::CompleteMatch, "Full Correction Range", 0.0, 1.0, 0.0, "", true, false, true},
       {ParameterId::CorrectionStrength, "Correction Strength", -1.0, 1.0, 1.0, "x", true, false, false},
@@ -926,6 +926,41 @@ ProfileValidation HeadlessPluginCore::commitCandidate(
   if (!rendererResult.accepted) return rendererResult;
   snapshot_ = std::move(committed);
   return validation;
+}
+
+ProfileValidation HeadlessPluginCore::commitManualCorrection(
+    const IrRenderSettings& settings) {
+  try {
+    const bool flat = std::abs(settings.correctionGainDb) < 1.0e-12 &&
+                      std::all_of(settings.manualGains.begin(),
+                                  settings.manualGains.end(),
+                                  [](double gain) {
+                                    return std::isfinite(gain) &&
+                                           std::abs(gain) < 1.0e-12;
+                                  });
+    if (flat) {
+      const auto result = commitKernel({1.0});
+      if (result.accepted) snapshot_.reset();
+      return result;
+    }
+
+    CorrectionModel flatModel;
+    flatModel.mode = MatchMode::FullMix;
+    flatModel.analysisLowHz = 20.0;
+    flatModel.analysisHighHz = 20000.0;
+    flatModel.resolution = std::max(
+        1, static_cast<int>(settings.manualGains.size()));
+    flatModel.nodes = {
+        {20.0, 0.0, 1.0},
+        {20000.0, 0.0, 1.0},
+    };
+    const auto kernel = renderMinimumPhaseIr(flatModel, settings);
+    const auto result = commitKernel(kernel);
+    if (result.accepted) snapshot_.reset();
+    return result;
+  } catch (const std::exception& error) {
+    return {false, ProfileIssue::InvalidModel, error.what()};
+  }
 }
 
 void HeadlessPluginCore::clearProfile() {

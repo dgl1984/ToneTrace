@@ -6,6 +6,7 @@
 #define _WIN32_IE 0x0600
 #endif
 #include "tonetrace_win32_editor.h"
+#include "tonetrace_accessible_fader.h"
 #include "resource.h"
 
 #include <clap/clap.h>
@@ -64,6 +65,8 @@ constexpr int kTraceId = 105;
 constexpr int kExportId = 106;
 constexpr int kImportId = 107;
 constexpr int kModeComboId = 200;
+constexpr int kDescriptionLabelId = 202;
+constexpr int kDescriptionEditId = 203;
 constexpr int kEditFirstId = 300;
 constexpr int kTabControlId = 50;
 constexpr int kBandSliderFirstId = 2000;
@@ -246,7 +249,7 @@ class ToneTraceWin32Editor::Impl {
   bool create() {
     // The dialog is created in setParent() once the real parent window is
     // known; the CLAP spec calls set_parent before show() for embedded GUIs.
-    return true;
+    return tonetrace::win32::registerAccessibleFaderClass(moduleInstance());
   }
 
   void destroy() {
@@ -366,9 +369,9 @@ class ToneTraceWin32Editor::Impl {
 
   bool adjustSize(std::uint32_t& width, std::uint32_t& height) const {
     width = std::max<std::uint32_t>(width,
-                                    static_cast<std::uint32_t>(px(640)));
+                                    static_cast<std::uint32_t>(px(740)));
     height = std::max<std::uint32_t>(height,
-                                     static_cast<std::uint32_t>(px(400)));
+                                     static_cast<std::uint32_t>(px(500)));
     return true;
   }
 
@@ -410,8 +413,7 @@ class ToneTraceWin32Editor::Impl {
   }
 
   static void unregisterWindowClasses() {
-    // No custom window class is registered; dialogs use the system dialog
-    // class, so there is nothing to unregister.
+    tonetrace::win32::unregisterAccessibleFaderClass(moduleInstance());
   }
 
   static Impl* fromWindow(HWND window) {
@@ -435,8 +437,6 @@ class ToneTraceWin32Editor::Impl {
                                           WPARAM wParam, LPARAM lParam);
   static LRESULT CALLBACK tabControlProc(HWND hwnd, UINT message,
                                          WPARAM wParam, LPARAM lParam);
-  static LRESULT CALLBACK bandEditProc(HWND hwnd, UINT message,
-                                       WPARAM wParam, LPARAM lParam);
   static INT_PTR CALLBACK dialogProc(HWND hwnd, UINT message, WPARAM wParam,
                                      LPARAM lParam);
   POINT editorOrigin() const;
@@ -525,6 +525,7 @@ class ToneTraceWin32Editor::Impl {
   void onTabChanged();
   void onTabFocus();
   void adjustBand(int band, int position);
+  void setBandValueDb(int band, double valueDb);
   void playBandTone(int band) const;
   void onBandFocus(int band);
   void announceBandValue(int band);
@@ -535,6 +536,14 @@ class ToneTraceWin32Editor::Impl {
   void adjustBandStep(int band, int step);
   void bandToExtreme(int band, bool maximum);
   [[nodiscard]] double bandRangeDb(bool maximum) const;
+  static double faderGetValue(void* context, int band);
+  static double faderGetMinimum(void* context, int band);
+  static double faderGetMaximum(void* context, int band);
+  static void faderSetValue(void* context, int band, double value);
+  static std::wstring faderGetName(void* context, int band);
+  static void faderOnFocus(void* context, int band);
+  static void faderToggleTrace(void* context);
+  static double faderGetScale(void* context);
   void correctionAt(double frequencyHz, double& matchDb, double& trimDb,
                     double& finalDb) const;
   [[nodiscard]] double finalCorrectionDb(double frequencyHz) const;
@@ -618,6 +627,7 @@ class ToneTraceWin32Editor::Impl {
   HWND tabControl_ = nullptr;
   HWND statusEdit_ = nullptr;
   HWND readoutEdit_ = nullptr;
+  HWND descriptionLabel_ = nullptr;
   HWND descriptionEdit_ = nullptr;
   HWND modeCombo_ = nullptr;
   HWND traceButton_ = nullptr;
@@ -725,12 +735,6 @@ INT_PTR ToneTraceWin32Editor::Impl::dialogMessage(HWND hwnd, UINT message,
       DrawTextW(dc, L"CAPTURE  /  COMPARE  /  REFINE", -1, &subtitle,
                 DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
       if (selectedPage_ == 0) {
-        RECT panelLabel{descriptionRect().left, px(46), descriptionRect().right,
-                        px(62)};
-        DrawTextW(dc, L"Curve Description", -1, &panelLabel,
-                  DT_RIGHT | DT_SINGLELINE | DT_NOPREFIX);
-      }
-      if (selectedPage_ == 0) {
         paintCanvas(dc, canvasRect());
       } else {
         // A trace tab shows only its band sliders; give the page a quiet
@@ -752,13 +756,18 @@ INT_PTR ToneTraceWin32Editor::Impl::dialogMessage(HWND hwnd, UINT message,
       break;
     }
     case WM_TIMER:
+      // While offline rendering, suppress every rest of the GUI activity: the
+      // 33 ms refresh/repaint timer above is already gated, and the deferred
+      // trace-announce event below must also be dropped so a bounce never
+      // triggers a repaint or an accessibility announcement.
       if (wParam == kTimerId && !offline_) {
         if (refresh_ != nullptr) refresh_(context_);
         refresh();
       } else if (wParam == kTraceAnnounceTimerId) {
         traceAnnounceTimer_ = 0;
         KillTimer(window_, kTraceAnnounceTimerId);
-        if (readoutEdit_ != nullptr && (traceMode_ || selectedPage_ > 0)) {
+        if (!offline_ && readoutEdit_ != nullptr &&
+            (traceMode_ || selectedPage_ > 0)) {
           NotifyWinEvent(EVENT_OBJECT_VALUECHANGE, readoutEdit_, OBJID_CLIENT,
                          CHILDID_SELF);
         }
@@ -1254,235 +1263,6 @@ LRESULT CALLBACK ToneTraceWin32Editor::Impl::tabControlProc(
   return CallWindowProcW(original, hwnd, message, wParam, lParam);
 }
 
-LRESULT CALLBACK ToneTraceWin32Editor::Impl::bandEditProc(
-    HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
-  const WNDPROC original =
-      reinterpret_cast<WNDPROC>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-  Impl* impl = fromWindow(GetParent(hwnd));
-  const int band = static_cast<int>(GetDlgCtrlID(hwnd)) - kBandSliderFirstId;
-
-  // The native control remains a readonly EDIT so MSAA/NVDA sees exactly the
-  // same concise band/frequency/value text. Sighted users get a conventional
-  // vertical EQ-fader drawing and mouse interaction layered onto that same
-  // control; there is no second focus stop or second parameter surface.
-  if (message == WM_PAINT) {
-    PAINTSTRUCT paint{};
-    HDC dc = BeginPaint(hwnd, &paint);
-    RECT rect{};
-    GetClientRect(hwnd, &rect);
-    const bool focused = GetFocus() == hwnd;
-    const bool hovered = cursorInsideWindow(hwnd);
-
-    HBRUSH background = CreateSolidBrush(focused ? RGB(34, 34, 42)
-                                      : hovered ? RGB(30, 33, 40)
-                                                : RGB(25, 25, 31));
-    FillRect(dc, &rect, background);
-    DeleteObject(background);
-
-    const COLORREF outline = focused ? RGB(255, 224, 160)
-                             : hovered ? RGB(104, 210, 188)
-                                       : RGB(92, 92, 104);
-    HPEN outlinePen = CreatePen(PS_SOLID, 1, outline);
-    HGDIOBJ oldPen = SelectObject(dc, outlinePen);
-    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    Rectangle(dc, rect.left, rect.top, rect.right, rect.bottom);
-    SelectObject(dc, oldBrush);
-    SelectObject(dc, oldPen);
-    DeleteObject(outlinePen);
-
-    const auto scaled = [&](int value) { return impl != nullptr ? impl->px(value) : value; };
-    const int valueHeight = scaled(24);
-    const int trackTop = rect.top + scaled(10);
-    const int rectBottom = static_cast<int>(rect.bottom);
-    const int trackBottom = std::max(trackTop + 1,
-                                     rectBottom - valueHeight - scaled(8));
-    const int trackX = (rect.left + rect.right) / 2;
-
-    HPEN trackPen = CreatePen(PS_SOLID, std::max(1, scaled(2)),
-                              RGB(112, 112, 124));
-    oldPen = SelectObject(dc, trackPen);
-    MoveToEx(dc, trackX, trackTop, nullptr);
-    LineTo(dc, trackX, trackBottom);
-    SelectObject(dc, oldPen);
-    DeleteObject(trackPen);
-
-    // A clear center marker makes 0 dB visually obvious, as on a graphic EQ.
-    const int zeroY = (trackTop + trackBottom) / 2;
-    HPEN zeroPen = CreatePen(PS_SOLID, 1, RGB(150, 150, 164));
-    oldPen = SelectObject(dc, zeroPen);
-    MoveToEx(dc, rect.left + scaled(6), zeroY, nullptr);
-    LineTo(dc, rect.right - scaled(6), zeroY);
-    SelectObject(dc, oldPen);
-    DeleteObject(zeroPen);
-
-    const double lo = impl != nullptr ? impl->bandRangeDb(false) : -60.0;
-    const double hi = impl != nullptr ? impl->bandRangeDb(true) : 60.0;
-    const double db = (impl != nullptr && band >= 0)
-                          ? impl->bandValueDb(band)
-                          : 0.0;
-    const double normalized =
-        hi > lo ? std::clamp((db - lo) / (hi - lo), 0.0, 1.0) : 0.5;
-    const int thumbY = static_cast<int>(std::lround(
-        trackBottom - normalized * static_cast<double>(trackBottom - trackTop)));
-    HPEN levelPen = CreatePen(PS_SOLID, std::max(1, scaled(3)),
-                              db >= 0.0 ? RGB(104, 210, 188)
-                                        : RGB(102, 166, 224));
-    oldPen = SelectObject(dc, levelPen);
-    MoveToEx(dc, trackX, zeroY, nullptr);
-    LineTo(dc, trackX, thumbY);
-    SelectObject(dc, oldPen);
-    DeleteObject(levelPen);
-
-    const int thumbHalfWidth = scaled(13);
-    const int thumbHalfHeight = scaled(5);
-    RECT thumb{trackX - thumbHalfWidth, thumbY - thumbHalfHeight,
-               trackX + thumbHalfWidth, thumbY + thumbHalfHeight};
-    HBRUSH thumbBrush = CreateSolidBrush(
-        focused ? RGB(255, 240, 210)
-                : hovered ? RGB(190, 245, 232) : RGB(226, 226, 232));
-    const int thumbSaved = SaveDC(dc);
-    SelectObject(dc, thumbBrush);
-    SelectObject(dc, GetStockObject(NULL_PEN));
-    RoundRect(dc, thumb.left, thumb.top, thumb.right, thumb.bottom,
-              scaled(4), scaled(4));
-    RestoreDC(dc, thumbSaved);
-    DeleteObject(thumbBrush);
-
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, focused ? RGB(255, 240, 210) : RGB(232, 232, 238));
-    HFONT font = reinterpret_cast<HFONT>(SendMessageW(hwnd, WM_GETFONT, 0, 0));
-    HGDIOBJ oldFont = font != nullptr ? SelectObject(dc, font) : nullptr;
-    wchar_t value[32]{};
-    std::swprintf(value, std::size(value), L"%+.1f dB", db);
-    RECT valueRect{rect.left + 2, rect.bottom - valueHeight, rect.right - 2,
-                   rect.bottom - 2};
-    DrawTextW(dc, value, -1, &valueRect,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-    if (oldFont != nullptr) SelectObject(dc, oldFont);
-    EndPaint(hwnd, &paint);
-    return 0;
-  }
-  if (message == WM_ERASEBKGND) return 1;
-  if (message == WM_MOUSEMOVE) {
-    TRACKMOUSEEVENT tracking{};
-    tracking.cbSize = sizeof(tracking);
-    tracking.dwFlags = TME_LEAVE;
-    tracking.hwndTrack = hwnd;
-    TrackMouseEvent(&tracking);
-    if (GetCapture() != hwnd) InvalidateRect(hwnd, nullptr, FALSE);
-  } else if (message == WM_MOUSELEAVE) {
-    InvalidateRect(hwnd, nullptr, FALSE);
-  }
-  if (message == WM_SETCURSOR) {
-    // IDC_SIZENS follows the build's ANSI/Unicode macro setting. Use the
-    // matching generic Win32 entry point rather than forcing LoadCursorW.
-    SetCursor(LoadCursor(nullptr, IDC_SIZENS));
-    return TRUE;
-  }
-
-  auto setFromMouseY = [&](int y) {
-    if (impl == nullptr || band < 0 || band >= impl->traceBandCount()) return;
-    RECT rect{};
-    GetClientRect(hwnd, &rect);
-    const int valueHeight = impl->px(24);
-    const int trackTop = rect.top + impl->px(10);
-    const int rectBottom = static_cast<int>(rect.bottom);
-    const int trackBottom = std::max(trackTop + 1,
-                                     rectBottom - valueHeight - impl->px(8));
-    const double lo = impl->bandRangeDb(false);
-    const double hi = impl->bandRangeDb(true);
-    const double normalized = std::clamp(
-        static_cast<double>(trackBottom - y) /
-            static_cast<double>(trackBottom - trackTop),
-        0.0, 1.0);
-    // Mouse editing follows the existing whole-dB keyboard granularity rather
-    // than introducing a second precision model just for pointer users.
-    const int desired = static_cast<int>(
-        std::lround(lo + normalized * (hi - lo)));
-    impl->adjustBand(band, desired);
-  };
-
-  if (message == WM_LBUTTONDOWN) {
-    SetFocus(hwnd);
-    SetCapture(hwnd);
-    setFromMouseY(GET_Y_LPARAM(lParam));
-    return 0;
-  }
-  if (message == WM_MOUSEMOVE && GetCapture() == hwnd) {
-    // Capture is the authoritative drag state. Precision touchpads can promote
-    // a tap-and-drag to mouse messages without preserving MK_LBUTTON on every
-    // synthesized WM_MOUSEMOVE; requiring that legacy flag makes the fader
-    // appear to grab and then refuse to move. WM_LBUTTONUP (or focus/capture
-    // loss) still terminates the drag, so accepting captured moves is bounded.
-    setFromMouseY(GET_Y_LPARAM(lParam));
-    return 0;
-  }
-  if (message == WM_LBUTTONUP && GetCapture() == hwnd) {
-    setFromMouseY(GET_Y_LPARAM(lParam));
-    ReleaseCapture();
-    return 0;
-  }
-  if (message == WM_LBUTTONDBLCLK) {
-    if (impl != nullptr && band >= 0) impl->neutralizeBand(band);
-    return 0;
-  }
-  if (message == WM_MOUSEWHEEL && impl != nullptr && band >= 0) {
-    SetFocus(hwnd);
-    const int steps = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
-    if (steps != 0) impl->adjustBandStep(band, steps);
-    return 0;
-  }
-
-  if (message == WM_SETFOCUS) {
-    if (impl != nullptr && band >= 0) impl->onBandFocus(band);
-    InvalidateRect(hwnd, nullptr, TRUE);
-  } else if (message == WM_KILLFOCUS) {
-    if (GetCapture() == hwnd) ReleaseCapture();
-    InvalidateRect(hwnd, nullptr, TRUE);
-  }
-  if (message == WM_GETDLGCODE) {
-    const LRESULT code =
-        CallWindowProcW(original, hwnd, message, wParam, lParam);
-    return code | DLGC_WANTARROWS;
-  }
-  if (message == WM_KEYDOWN && impl != nullptr) {
-    const int key = static_cast<int>(wParam);
-    if (key == 'T' || key == VK_F2) {
-      impl->toggleTrace();
-      return 0;
-    }
-    if (band >= 0) {
-      if (key == '0' || key == VK_NUMPAD0 || key == 'N') {
-        impl->neutralizeBand(band);
-        return 0;
-      }
-      int step = 0;
-      if (key == VK_UP || key == VK_RIGHT) {
-        step = 1;
-      } else if (key == VK_DOWN || key == VK_LEFT) {
-        step = -1;
-      } else if (key == VK_PRIOR) {
-        step = 6;
-      } else if (key == VK_NEXT) {
-        step = -6;
-      }
-      if (step != 0) {
-        impl->adjustBandStep(band, step);
-        return 0;
-      }
-      if (key == VK_HOME) {
-        impl->bandToExtreme(band, true);
-        return 0;
-      }
-      if (key == VK_END) {
-        impl->bandToExtreme(band, false);
-        return 0;
-      }
-    }
-  }
-  return CallWindowProcW(original, hwnd, message, wParam, lParam);
-}
-
 void ToneTraceWin32Editor::Impl::setTabOrder() {
   const auto moveTop = [](HWND control) {
     if (control != nullptr) {
@@ -1506,6 +1286,10 @@ void ToneTraceWin32Editor::Impl::setTabOrder() {
   topWorkflow(5);  // Export Curve
   topWorkflow(4);  // Copy Curve Description
   moveTop(descriptionEdit_);
+  // A real STATIC immediately before the EDIT in Z-order gives the native
+  // edit a stable MSAA/UIA name. Painted text cannot label a control, and left
+  // the description box borrowing an unrelated neighboring name in NVDA.
+  moveTop(descriptionLabel_);
   moveTop(readoutEdit_);
   moveTop(statusEdit_);
   for (int index = static_cast<int>(editControls_.size()) - 1; index >= 0;
@@ -1561,6 +1345,7 @@ bool ToneTraceWin32Editor::Impl::recreateFonts() {
   apply(tabControl_, font_);
   apply(statusEdit_, font_);
   apply(readoutEdit_, font_);
+  apply(descriptionLabel_, smallFont_);
   apply(descriptionEdit_, font_);
   apply(modeCombo_, font_);
   apply(traceButton_, font_);
@@ -1769,11 +1554,24 @@ bool ToneTraceWin32Editor::Impl::createChildren() {
     setSubclass(readoutEdit_, &Impl::keyForwardProc);
   }
 
+  descriptionLabel_ = CreateWindowExW(
+      WS_EX_TRANSPARENT, L"STATIC", L"Curve Description",
+      WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_NOPREFIX,
+      0, 0, 4, 4, window_,
+      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kDescriptionLabelId)),
+      instance, nullptr);
+  if (descriptionLabel_ != nullptr) {
+    SendMessageW(descriptionLabel_, WM_SETFONT,
+                 reinterpret_cast<WPARAM>(smallFont_), FALSE);
+  }
+
   descriptionEdit_ = CreateWindowExW(
       WS_EX_CLIENTEDGE, L"EDIT", L"",
       WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_READONLY | ES_MULTILINE |
           ES_AUTOVSCROLL | WS_VSCROLL,
-      0, 0, 4, 4, window_, nullptr, instance, nullptr);
+      0, 0, 4, 4, window_,
+      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kDescriptionEditId)),
+      instance, nullptr);
   if (descriptionEdit_ != nullptr) {
     SendMessageW(descriptionEdit_, WM_SETFONT,
                  reinterpret_cast<WPARAM>(font_), FALSE);
@@ -1926,9 +1724,10 @@ void ToneTraceWin32Editor::Impl::layoutChildren() {
                SWP_NOACTIVATE | SWP_NOZORDER);
 
   const int editStartX = margin + px(236);
-  const int editWidth = std::max(
-      px(64), (width - editStartX - margin - (static_cast<int>(editControls_.size()) - 1) * px(6)) /
-                  static_cast<int>(editControls_.size()));
+  const int editCount = std::max(1, static_cast<int>(editControls_.size()));
+  const int naturalEditWidth =
+      (width - editStartX - margin - (editCount - 1) * px(6)) / editCount;
+  const int editWidth = std::max(px(64), naturalEditWidth);
   x = editStartX;
   for (std::size_t index = 0; index < editControls_.size(); ++index) {
     if (index < editLabels_.size()) {
@@ -1948,6 +1747,9 @@ void ToneTraceWin32Editor::Impl::layoutChildren() {
                SWP_NOACTIVATE | SWP_NOZORDER);
 
   const RECT description = descriptionRect();
+  SetWindowPos(descriptionLabel_, nullptr, description.left, px(46),
+               description.right - description.left, px(16),
+               SWP_NOACTIVATE | SWP_NOZORDER);
   SetWindowPos(descriptionEdit_, nullptr, description.left, description.top,
                description.right - description.left,
                description.bottom - description.top,
@@ -2112,7 +1914,11 @@ void ToneTraceWin32Editor::Impl::paintCanvas(HDC dc, const RECT& bounds) {
   // Make an adaptive graph self-explanatory without adding another control.
   wchar_t rangeLabel[32]{};
   std::swprintf(rangeLabel, std::size(rangeLabel), L"+/-%.0f dB", displayDb);
-  RECT rangeText{plot.right - px(72), plot.top + px(3), plot.right - px(6),
+  // In trace mode the top-right corner belongs to the TRACE badge; park the
+  // range label to its left so the two texts never overdraw each other.
+  const int rangeRight =
+      traceMode_ ? plot.right - px(90) : plot.right - px(6);
+  RECT rangeText{rangeRight - px(66), plot.top + px(3), rangeRight,
                  plot.top + px(18)};
   SetTextColor(dc, RGB(175, 175, 188));
   DrawTextW(dc, rangeLabel, -1, &rangeText,
@@ -2217,6 +2023,36 @@ void ToneTraceWin32Editor::Impl::paintCanvas(HDC dc, const RECT& bounds) {
     RestoreDC(dc, markerSaved);
     DeleteObject(markerBrush);
     DeleteObject(markerPen);
+
+    // A tooltip-style chip names the frequency under the cursor so pointer
+    // users can explore the curve without looking down at the readout. The
+    // fraction math mirrors updateReadout() so chip and readout always agree.
+    const double fraction =
+        static_cast<double>(cursorIndex_) / static_cast<double>(plotWidth);
+    const double cursorFrequency =
+        kLogLowHz * std::pow(kLogHighHz / kLogLowHz, fraction);
+    const std::wstring chipText = formatFrequency(cursorFrequency);
+    const int chipWidth = px(52);
+    const int plotLeft = static_cast<int>(plot.left);
+    const int plotRight = static_cast<int>(plot.right);
+    const int chipLeft =
+        std::clamp(x - chipWidth / 2, plotLeft + px(2),
+                   std::max(plotLeft + px(2), plotRight - chipWidth - px(2)));
+    RECT chip{chipLeft, plot.top + px(2), chipLeft + chipWidth,
+              plot.top + px(16)};
+    HBRUSH chipBrush = CreateSolidBrush(RGB(28, 28, 34));
+    FillRect(dc, &chip, chipBrush);
+    DeleteObject(chipBrush);
+    HPEN chipPen = CreatePen(PS_SOLID, 1, RGB(104, 210, 188));
+    HGDIOBJ chipOldPen = SelectObject(dc, chipPen);
+    HGDIOBJ chipOldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    Rectangle(dc, chip.left, chip.top, chip.right, chip.bottom);
+    SelectObject(dc, chipOldBrush);
+    SelectObject(dc, chipOldPen);
+    DeleteObject(chipPen);
+    SetTextColor(dc, RGB(220, 220, 228));
+    DrawTextW(dc, chipText.c_str(), -1, &chip,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
   }
 
   if (traceMode_) {
@@ -2599,23 +2435,37 @@ void ToneTraceWin32Editor::Impl::importCurve(int menuId) {
 void ToneTraceWin32Editor::Impl::updateReadout() {
   if (readoutEdit_ == nullptr) return;
   const auto* snapshot = getSnapshot_ != nullptr ? getSnapshot_(context_) : nullptr;
-  if (snapshot == nullptr) {
-    SetWindowTextW(readoutEdit_, L"No tone trace loaded.");
-    return;
-  }
   if (traceMode_ || selectedPage_ > 0) {
     const int count = traceBandCount();
     const double frequency = traceFrequency();
     double match = 0.0;
     double trim = 0.0;
     double final = 0.0;
-    correctionAt(frequency, match, trim, final);
-    wchar_t buffer[160]{};
-    std::swprintf(buffer, std::size(buffer),
-                  L"Band %d of %d, %d Hz, Final %+.1f dB (match %+.1f, trim %+.1f)",
-                  traceIndex_ + 1, count,
-                  static_cast<int>(std::lround(frequency)), final, match, trim);
+    if (snapshot != nullptr) {
+      correctionAt(frequency, match, trim, final);
+    } else {
+      trim = getBandGain_ != nullptr && traceIndex_ >= 0 && traceIndex_ < count
+                 ? getBandGain_(context_, static_cast<std::size_t>(traceIndex_))
+                 : 0.0;
+      final = trim;
+    }
+    wchar_t buffer[192]{};
+    if (snapshot != nullptr) {
+      std::swprintf(buffer, std::size(buffer),
+                    L"Band %d of %d, %d Hz, Final %+.1f dB (match %+.1f, trim %+.1f)",
+                    traceIndex_ + 1, count,
+                    static_cast<int>(std::lround(frequency)), final, match, trim);
+    } else {
+      std::swprintf(buffer, std::size(buffer),
+                    L"Band %d of %d, %d Hz, %+.1f dB; manual graphic EQ, no learned correction",
+                    traceIndex_ + 1, count,
+                    static_cast<int>(std::lround(frequency)), final);
+    }
     SetWindowTextW(readoutEdit_, buffer);
+    return;
+  }
+  if (snapshot == nullptr) {
+    SetWindowTextW(readoutEdit_, L"No tone trace loaded. Manual band EQ remains available.");
     return;
   }
   const RECT bounds = graphPlotRect(canvasRect());
@@ -2692,9 +2542,16 @@ bool ToneTraceWin32Editor::Impl::traceRange(double& lowHz,
 
 bool ToneTraceWin32Editor::Impl::frequencyInCorrectionRange(
     double frequencyHz) const {
+  if (!std::isfinite(frequencyHz)) return false;
   const auto* snapshot =
       getSnapshot_ != nullptr ? getSnapshot_(context_) : nullptr;
-  if (snapshot == nullptr || !std::isfinite(frequencyHz)) return false;
+  if (snapshot == nullptr) {
+    const double low = std::max(
+        paramValue(tonetrace::ParameterId::RangeLowHz), kLogLowHz);
+    const double high = std::min(
+        paramValue(tonetrace::ParameterId::RangeHighHz), kLogHighHz);
+    return high > low && frequencyHz >= low && frequencyHz <= high;
+  }
   const double low = std::max(snapshot->renderSettings.rangeLowHz,
                               snapshot->uncappedModel.analysisLowHz);
   const double high = std::min(snapshot->renderSettings.rangeHighHz,
@@ -2825,9 +2682,13 @@ void ToneTraceWin32Editor::Impl::onBandFocus(int band) {
 
 void ToneTraceWin32Editor::Impl::announceBandValue(int band) {
   if (band < 0 || band >= traceBandCount()) return;
+  // Do not write the readout or defer a value-change announcement from the
+  // band focus/value path. A native Edit raises EVENT_OBJECT_VALUECHANGE
+  // whenever SetWindowTextW changes its text, which made the background readout
+  // a competing announcer that drowned the fader's own EVENT_OBJECT_FOCUS /
+  // EVENT_OBJECT_VALUECHANGE. The readout is still updated (and still announces)
+  // for page descriptions, status, and trace navigation elsewhere.
   traceIndex_ = band;
-  updateReadout();
-  armTraceAnnounce();
 }
 
 void ToneTraceWin32Editor::Impl::playPageSweep(const TracePage& page) const {
@@ -2997,16 +2858,20 @@ void ToneTraceWin32Editor::Impl::rebuildTraceTabs() {
       // and the subclass makes it act like a slider: Up/Down step 1 dB,
       // PageUp/PageDown step 6, Home/End go to the curve's extremes, 0 (or N) sets
       // the band to 0 dB.
-      HWND edit = CreateWindowExW(
-          0, L"EDIT", bandValueText(band).c_str(),
-          WS_CHILD | WS_TABSTOP | ES_READONLY | WS_BORDER,
-          0, 0, 4, 4, window_,
-          reinterpret_cast<HMENU>(static_cast<INT_PTR>(
-              kBandSliderFirstId + band)),
-          moduleInstance(), nullptr);
+      tonetrace::win32::AccessibleFaderCallbacks callbacks{};
+      callbacks.context = this;
+      callbacks.getValue = &Impl::faderGetValue;
+      callbacks.getMinimum = &Impl::faderGetMinimum;
+      callbacks.getMaximum = &Impl::faderGetMaximum;
+      callbacks.setValue = &Impl::faderSetValue;
+      callbacks.getName = &Impl::faderGetName;
+      callbacks.onFocus = &Impl::faderOnFocus;
+      callbacks.toggleTrace = &Impl::faderToggleTrace;
+      callbacks.getScale = &Impl::faderGetScale;
+      HWND edit = tonetrace::win32::createAccessibleFader(
+          window_, moduleInstance(), kBandSliderFirstId + band, band, callbacks);
       if (edit == nullptr) continue;
       SendMessageW(edit, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
-      setSubclass(edit, &Impl::bandEditProc);
       page.edits.push_back(edit);
 
       HWND label = CreateWindowExW(
@@ -3076,6 +2941,7 @@ void ToneTraceWin32Editor::Impl::showTracePage(int page) {
   // match page and the focused band's value (and page description) on the
   // trace pages.
   setVisible(readoutEdit_, true);
+  setVisible(descriptionLabel_, match);
   setVisible(descriptionEdit_, match);
   for (HWND control : workflowButtons_) setVisible(control, match);
   for (HWND control : editControls_) setVisible(control, match);
@@ -3135,49 +3001,79 @@ void ToneTraceWin32Editor::Impl::onTabChanged() {
 void ToneTraceWin32Editor::Impl::onTabFocus() {}
 
 void ToneTraceWin32Editor::Impl::adjustBand(int band, int position) {
-  if (setBandGain_ == nullptr) return;
+  setBandValueDb(band, static_cast<double>(position));
+}
+
+void ToneTraceWin32Editor::Impl::setBandValueDb(int band, double valueDb) {
+  if (setBandGain_ == nullptr || !std::isfinite(valueDb)) return;
   if (band < 0 || band >= traceBandCount()) return;
-  // position is the desired FINAL band value (what the box shows). The engine
-  // stores the trim — the delta on top of the auto match — so convert before
-  // storing; the box then reads back exactly what the user set.
+  const double desired = std::clamp(valueDb, bandRangeDb(false), bandRangeDb(true));
   const double match = matchDbAtBand(band);
-  const double trim =
-      std::clamp(static_cast<double>(position) - match, -120.0, 120.0);
+  const double trim = std::clamp(desired - match, -120.0, 120.0);
   setBandGain_(context_, static_cast<std::size_t>(band), trim);
-  // Refresh the focused box's text and announce the new value so a screen
-  // reader hears the real dB change, not a trackbar percentage.
   for (TracePage& page : tracePages_) {
     for (int offset = 0; offset < page.bandCount; ++offset) {
       if (page.firstBand + offset != band) continue;
       if (offset >= static_cast<int>(page.edits.size())) break;
-      const HWND edit = page.edits[offset];
-      if (edit == nullptr) break;
-      SetWindowTextW(edit, bandValueText(band).c_str());
-      InvalidateRect(edit, nullptr, TRUE);
-      if (GetFocus() == edit) {
-        NotifyWinEvent(EVENT_OBJECT_VALUECHANGE, edit, OBJID_CLIENT,
-                       CHILDID_SELF);
-      }
+      tonetrace::win32::syncAccessibleFader(page.edits[offset], true);
       break;
     }
   }
   announceBandValue(band);
 }
 
+double ToneTraceWin32Editor::Impl::faderGetValue(void* context, int band) {
+  auto* impl = static_cast<Impl*>(context);
+  return impl != nullptr ? impl->bandValueDb(band) : 0.0;
+}
+
+double ToneTraceWin32Editor::Impl::faderGetMinimum(void* context, int) {
+  auto* impl = static_cast<Impl*>(context);
+  return impl != nullptr ? impl->bandRangeDb(false) : -60.0;
+}
+
+double ToneTraceWin32Editor::Impl::faderGetMaximum(void* context, int) {
+  auto* impl = static_cast<Impl*>(context);
+  return impl != nullptr ? impl->bandRangeDb(true) : 60.0;
+}
+
+void ToneTraceWin32Editor::Impl::faderSetValue(void* context, int band, double value) {
+  auto* impl = static_cast<Impl*>(context);
+  if (impl != nullptr) impl->setBandValueDb(band, value);
+}
+
+std::wstring ToneTraceWin32Editor::Impl::faderGetName(void* context, int band) {
+  auto* impl = static_cast<Impl*>(context);
+  if (impl == nullptr) return L"Tone Trace band";
+  return L"Band " + std::to_wstring(band + 1) + L", " +
+         impl->bandFrequencyText(band);
+}
+
+void ToneTraceWin32Editor::Impl::faderOnFocus(void* context, int band) {
+  auto* impl = static_cast<Impl*>(context);
+  if (impl != nullptr) impl->onBandFocus(band);
+}
+
+void ToneTraceWin32Editor::Impl::faderToggleTrace(void* context) {
+  auto* impl = static_cast<Impl*>(context);
+  if (impl != nullptr) impl->toggleTrace();
+}
+
+double ToneTraceWin32Editor::Impl::faderGetScale(void* context) {
+  auto* impl = static_cast<Impl*>(context);
+  return impl != nullptr ? impl->scale_ : 1.0;
+}
+
 void ToneTraceWin32Editor::Impl::refreshBandSliders() {
   if (getBandGain_ == nullptr) return;
-  for (TracePage& page : tracePages_) {
-    for (int offset = 0; offset < page.bandCount; ++offset) {
-      if (offset >= static_cast<int>(page.edits.size())) break;
-      const int band = page.firstBand + offset;
-      const HWND edit = page.edits[offset];
-      // Never fight the user while a box is focused; the subclass refreshes it
-      // itself after each edit.
-      if (GetFocus() == edit) continue;
-      if (setWindowTextIfChanged(edit, bandValueText(band))) {
-        InvalidateRect(edit, nullptr, TRUE);
-      }
-    }
+  // Only refresh the band page that is actually visible. The 33 ms refresh runs
+  // every tick, and syncing every fader on every hidden page burns work and was
+  // generating accessibility events for bands the user cannot see.
+  if (selectedPage_ <= 0) return;
+  if (static_cast<std::size_t>(selectedPage_ - 1) >= tracePages_.size()) return;
+  const TracePage& page = tracePages_[static_cast<std::size_t>(selectedPage_ - 1)];
+  for (HWND fader : page.edits) {
+    tonetrace::win32::syncAccessibleFader(fader, false);
   }
 }
 
