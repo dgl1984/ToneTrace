@@ -251,19 +251,34 @@ void feedSeconds(const clap_plugin_t* plugin, double seconds,
 }
 
 void commitCorrectionProfile(const clap_plugin_t* plugin) {
+  // The pre-profile band test queues the same main-thread rebuild callback a
+  // real host would service. Drain it before capture so this neutral harness's
+  // no-op request_callback implementation cannot leave stale work pending.
+  plugin->on_main_thread(plugin);
   require(plugin->start_processing(plugin), "ui harness start failed");
   feedSeconds(plugin, 2.4, 1, 0.0);   // Capture Reference
-  feedSeconds(plugin, 2.4, 2, 1.7);   // Learn Target
+  feedSeconds(plugin, 3.2, 2, 1.7);   // Learn Target through low-confidence threshold
   feedSeconds(plugin, 0.2, 3, 0.0);   // Correct Target schedules analysis
   plugin->on_main_thread(plugin);
   pumpMessages();
   const auto* params = static_cast<const clap_plugin_params_t*>(
       plugin->get_extension(plugin, CLAP_EXT_PARAMS));
+  const auto valueOf = [&](clap_id id) {
+    double value = -1.0;
+    params->get_value(plugin, id, &value);
+    return value;
+  };
   double status = -1.0;
   params->get_value(plugin, 230, &status);
   require(status == 4.0 || status == 5.0,
           "ui harness could not reach a committed correction (status=" +
-              std::to_string(static_cast<int>(status)) + ")");
+              std::to_string(static_cast<int>(status)) +
+              ", workflow=" +
+              std::to_string(static_cast<int>(valueOf(100))) +
+              ", lastCommand=" +
+              std::to_string(static_cast<int>(valueOf(195))) +
+              ", confidence=" + std::to_string(valueOf(200)) +
+              ", captureSeconds=" + std::to_string(valueOf(220)) + ")");
 }
 
 void verifyKnownGoodKeyboardBaseline(HWND editor) {

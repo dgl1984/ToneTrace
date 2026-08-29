@@ -257,7 +257,9 @@ FocusFromWorkerResult QueryFocusFromWorker(HWND fader) {
     r.workerFocusIsNotFader = (GetFocus() != fader);
 
     IAccessible* acc = nullptr;
-    if (SUCCEEDED(AccessibleObjectFromWindow(fader, OBJID_CLIENT, IID_IAccessible,
+    if (SUCCEEDED(AccessibleObjectFromWindow(fader,
+                                             static_cast<DWORD>(OBJID_CLIENT),
+                                             IID_IAccessible,
                                              reinterpret_cast<void**>(&acc))) &&
         acc != nullptr) {
       const VARIANT self = SelfChild();
@@ -488,7 +490,7 @@ void Run(const char* clapPath) {
           "Curve Description label is not adjacent to its edit in Z-order");
   IAccessible* descriptionAccessible = nullptr;
   require(SUCCEEDED(AccessibleObjectFromWindow(
-              descriptionEdit, OBJID_CLIENT, IID_IAccessible,
+              descriptionEdit, static_cast<DWORD>(OBJID_CLIENT), IID_IAccessible,
               reinterpret_cast<void**>(&descriptionAccessible))) &&
               descriptionAccessible != nullptr,
           "Curve Description edit has no MSAA object");
