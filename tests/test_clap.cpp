@@ -51,11 +51,19 @@ struct DynamicLibrary {
 
   explicit DynamicLibrary(const char* path) {
 #if defined(_WIN32)
+    SetLastError(ERROR_SUCCESS);
     handle = LoadLibraryA(path);
+    const DWORD loadError = GetLastError();
 #else
     handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
 #endif
+#if defined(_WIN32)
+    require(handle != nullptr,
+            "could not load CLAP module (Windows error " +
+                std::to_string(loadError) + ")");
+#else
     require(handle != nullptr, "could not load CLAP module");
+#endif
   }
 
   ~DynamicLibrary() {
