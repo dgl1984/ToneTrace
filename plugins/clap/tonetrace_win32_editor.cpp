@@ -226,6 +226,23 @@ void addControlTooltip(HWND tooltip, HWND owner, HWND control,
   SendMessageW(tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
 }
 
+using TaskDialogIndirectFn = HRESULT(WINAPI*)(
+    const TASKDIALOGCONFIG*, int*, int*, BOOL*);
+
+TaskDialogIndirectFn taskDialogIndirectFn() {
+  // Hosts can activate an older common-controls implementation that does not
+  // export TaskDialogIndirect. Resolve it at runtime so that condition falls
+  // back to MessageBox instead of preventing the entire plug-in from loading.
+  static const TaskDialogIndirectFn function = [] {
+    HMODULE module = GetModuleHandleW(L"comctl32.dll");
+    if (module == nullptr) module = LoadLibraryW(L"comctl32.dll");
+    if (module == nullptr) return static_cast<TaskDialogIndirectFn>(nullptr);
+    return reinterpret_cast<TaskDialogIndirectFn>(
+        GetProcAddress(module, "TaskDialogIndirect"));
+  }();
+  return function;
+}
+
 int confirmManualIrExport(HWND owner) {
   TASKDIALOGCONFIG config{};
   config.cbSize = sizeof(config);
@@ -241,7 +258,9 @@ int confirmManualIrExport(HWND owner) {
   config.nDefaultButton = IDOK;
 
   int button = IDCANCEL;
-  if (SUCCEEDED(TaskDialogIndirect(&config, &button, nullptr, nullptr))) {
+  TaskDialogIndirectFn taskDialog = taskDialogIndirectFn();
+  if (taskDialog != nullptr &&
+      SUCCEEDED(taskDialog(&config, &button, nullptr, nullptr))) {
     return button;
   }
 
