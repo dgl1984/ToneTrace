@@ -110,6 +110,17 @@ if(TONETRACE_BUILD_TESTS)
   if(BUILD_TESTING)
     add_test(NAME tonetrace-ui-layout COMMAND tonetrace-ui-layout-tests)
   endif()
+
+  add_executable(tonetrace-band-value-tests tests/test_band_value.cpp)
+  target_include_directories(tonetrace-band-value-tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/plugins/clap")
+  target_compile_features(tonetrace-band-value-tests PRIVATE cxx_std_20)
+  tonetrace_enable_warnings(tonetrace-band-value-tests)
+  install(TARGETS tonetrace-band-value-tests
+    RUNTIME DESTINATION diagnostics COMPONENT Development)
+  if(BUILD_TESTING)
+    add_test(NAME tonetrace-band-value COMMAND tonetrace-band-value-tests)
+  endif()
 endif()
 
 if(TONETRACE_BUILD_PLUGINS)

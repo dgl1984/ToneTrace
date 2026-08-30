@@ -8,7 +8,7 @@ The unusual part is what happens next. Tone Trace does not treat the generated m
 
 This manual starts with the practical workflow. The more technical details are kept for the sections where they help explain a control or behavior rather than being required knowledge up front.
 
-Current version: **1.0.2**.
+Current version: **1.0.3**.
 
 ## The one distinction to get right
 
@@ -55,7 +55,7 @@ The native Tone Trace editor is currently a **Windows Win32 editor**. The plug-i
 
 ### Plug-in format
 
-Tone Trace EQ 1.0.2 ships as **CLAP**. The CLAP implementation is the tested reference release and contains the complete Tone Trace workflow and matching engine.
+Tone Trace EQ 1.0.3 ships as **CLAP**. The CLAP implementation is the tested reference release and contains the complete Tone Trace workflow and matching engine.
 
 ## 2. What Tone Trace is doing
 
@@ -369,7 +369,9 @@ Moving the pointer across the graph places a dotted cursor line, and a small lab
 | **0** (or **N**) | Center the selected band at 0 dB |
 | **T** or **F2** | Toggle Trace Curve mode |
 
-Each band is drawn visually as a vertical graphic-EQ fader, with its frequency above it, a clear 0 dB center mark, and the exact final dB value below the fader. Sighted users can click or drag a fader, use the mouse wheel for 1 dB steps (hold **Shift** while scrolling for 6 dB steps, matching Page Up / Page Down), or double-click to center that band at 0 dB. Hover, focus, positive gain, and negative gain have distinct visual feedback. The same control remains a native readonly edit for accessibility, so NVDA keeps the concise band/frequency/value announcement and the existing tab order rather than gaining extra slider controls or verbosity.
+Each band is drawn visually as a vertical graphic-EQ fader, with its frequency above it, a clear 0 dB center mark, and the exact final dB value below the fader. Sighted users can click or drag a fader, use the mouse wheel for 1 dB steps (hold **Shift** while scrolling for 6 dB steps, matching Page Up / Page Down), or double-click to center that band at 0 dB. Hover, focus, positive gain, and negative gain have distinct visual feedback. The same HWND exposes its band/frequency name and a unit-bearing editable dB value through standard Windows accessibility APIs. NVDA and Narrator should therefore announce the same dB number rather than converting the fader range to a percentage.
+
+Band values use one public format everywhere: the painted readout, exact-value editor, MSAA value, UI Automation value, and spoken result retain up to three meaningful decimal places. Unnecessary trailing zeroes beyond the first decimal are omitted. For example, `-6.2 dB` stays `-6.2 dB`, while `-6.234 dB` remains available as `-6.234 dB`. A 1 dB adjustment preserves the fractional base, so `-6.234 dB` becomes `-5.234 dB`.
 
 The band pages also work before you capture anything. In that state they are a
 standalone 30-band graphic EQ on the normal 20 Hz–20 kHz grid; manual changes
@@ -378,7 +380,7 @@ a match exists, those controls become trims around the learned correction.
 
 The displayed value is the **final tonal correction** at that band after Maximum Correction, Q / Sharpness, Correction Strength, and any manual trim. **Correction Gain** remains a separate global level trim and is not folded into every band value.
 
-Band pages use a preferred maximum of 10 bands each and are balanced when necessary to prevent a nearly empty last tab. The default 30-band resolution is therefore three pages: **1–10**, **11–20**, and **21–30**. A 60-band trace uses six predictable 10-band pages, while totals such as 31 are redistributed rather than leaving a one-band final page.
+Band pages use a preferred maximum of 10 bands each and are balanced when necessary to prevent a nearly empty last tab. The default 30-band resolution is therefore three pages: **1–10**, **11–20**, and **21–30**. A 60-band trace uses six predictable 10-band pages, while totals such as 31 are redistributed rather than leaving a one-band final page. Changing Correction Resolution while the editor is open rebuilds both the pages and their visible and accessible tab labels.
 
 ### Trace Curve mode
 
@@ -418,6 +420,8 @@ A Reference does **not** require a completed match before it can be exported. Af
 The exported IR is mono 32-bit floating point and contains the linear EQ correction only. It does not contain the Emergency Clip Guard.
 
 The IR reflects the correction that is active when you export it, including the currently selected Match Mode and rendering choices such as Correction Strength, Q / Sharpness, Correction Gain, Correction Range, and manual band trims. If you change those settings afterward, export a new IR to capture the new version of the correction.
+
+You can also export an IR before learning a match when you have created a curve with the band controls or Correction Gain. Tone Trace presents an accessible standard Windows warning that the IR contains a manually created curve and offers **OK** or **Cancel**, with **OK** as the focused default action. If no match exists and neither the bands nor Correction Gain has changed the flat response, export retains the **No matching curve is available to export yet** error. Strength, Sharpness, and other match-only controls do not make an otherwise flat unmatched instance exportable.
 
 ### Import Reference
 
@@ -571,7 +575,7 @@ The builder creates a clean Release build, runs the registered tests, stages onl
 
 ### Other platforms
 
-The source contains macOS universal and Linux CMake verification presets, but Tone Trace 1.0.2 does not ship a supported macOS/Linux binary asset or release builder. The custom accessible editor is Windows-only; non-Windows source builds use the CLAP host's parameter interface.
+The source contains macOS universal and Linux CMake verification presets, but Tone Trace 1.0.3 does not ship a supported macOS/Linux binary asset or release builder. The custom accessible editor is Windows-only; non-Windows source builds use the CLAP host's parameter interface.
 
 ### Development documents
 
@@ -621,4 +625,4 @@ This manual is intentionally about using Tone Trace. Source architecture, DSP de
 
 ---
 
-Tone Trace EQ 1.0.2 is the current Windows CLAP release. The matching engine, state handling, CLAP workflow, full-capture fallback, balanced band-page layout, Voice ringing safeguard, and release UI behavior are covered by automated tests. As with any audio plug-in release, the exact packaged Windows binary should still receive a final host and accessibility check before publication.
+Tone Trace EQ 1.0.3 is the current Windows CLAP release. The matching engine, state handling, CLAP workflow, full-capture fallback, balanced band-page layout, Voice ringing safeguard, and release UI behavior are covered by automated tests. As with any audio plug-in release, the exact packaged Windows binary should still receive a final host and accessibility check before publication.

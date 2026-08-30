@@ -19,6 +19,43 @@ jobs:
         run: cmake --build --preset windows-release --parallel
       - name: Test
         run: ctest --preset windows-release
+      - name: Read release version
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "VERSION is not semantic: $version"
+          }
+          "TONETRACE_VERSION=$version" >> $env:GITHUB_ENV
+          "TONETRACE_PACKAGE=ToneTrace_EQ_${version}_Windows_x64" >> $env:GITHUB_ENV
+      - name: Stage Windows release package
+        shell: pwsh
+        run: |
+          $source = (Get-Location).Path
+          $stage = Join-Path $source "dist/$env:TONETRACE_PACKAGE"
+          $manifest = Join-Path $stage "docs/BUILD_MANIFEST.txt"
+          cmake --install build-cmake/windows-x64-release `
+            --config Release --component Release --prefix $stage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake "-DROOT=$stage" "-DSOURCE_ROOT=$source" `
+            "-DOUT=$manifest" "-DPLATFORM_NAME=Windows x64" `
+            "-DPROJECT_VERSION=$env:TONETRACE_VERSION" `
+            -P cmake/write_build_manifest.cmake
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Push-Location dist
+          cmake -E tar cf "$env:TONETRACE_PACKAGE.zip" --format=zip `
+            $env:TONETRACE_PACKAGE
+          $archiveResult = $LASTEXITCODE
+          Pop-Location
+          if ($archiveResult -ne 0) { exit $archiveResult }
+          cmake -E tar tf "dist/$env:TONETRACE_PACKAGE.zip"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload Windows release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.TONETRACE_PACKAGE }}
+          path: dist/${{ env.TONETRACE_PACKAGE }}.zip
+          if-no-files-found: error
 
   linux:
     name: Linux verification

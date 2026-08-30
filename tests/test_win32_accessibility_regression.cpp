@@ -6,8 +6,11 @@
 //   - MSAA: the focus WinEvent resolves to a Slider on the same fader HWND,
 //     carrying a band/frequency name, a dB value, and STATE_SYSTEM_FOCUSED +
 //     STATE_SYSTEM_FOCUSABLE.
-//   - UIA: the SAME control is discovered from the editor tree as a Slider and
-//     exposes RangeValue with the correct value and 1/6 dB steps.
+//   - UIA: the SAME control is discovered from the editor tree as an Edit and
+//     exposes a unit-bearing string Value. It deliberately does not expose
+//     RangeValue, which makes Narrator normalize sliders to percentages.
+//     Focused value changes also emit the canonical dB text as a notification,
+//     which gives Narrator a spoken Up/Down result.
 //   - Focus/value events do not duplicate or compete: the background read-only
 //     readout edit must NOT emit a competing EVENT_OBJECT_VALUECHANGE merely
 //     because band focus or value changed.
@@ -309,7 +312,7 @@ FocusFromWorkerResult QueryFocusFromWorker(HWND fader) {
 }
 
 // ---- UI Automation helpers (used to prove the SAME control is discoverable via
-// ---- UIA and exposes a RangeValue, independent of MSAA).
+// ---- UIA and exposes the exact dB string, independent of MSAA).
 IUIAutomation* CreateAutomation() {
   IUIAutomation* u = nullptr;
   CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER,
@@ -330,18 +333,110 @@ std::wstring UiaAutoId(IUIAutomationElement* e) {
       v.vt == VT_BSTR && v.bstrVal) o = v.bstrVal;
   VariantClear(&v); return o;
 }
-bool UiaRangeValue(IUIAutomationElement* e, double& value, double& lo, double& hi,
-                   double& stepSmall, double& stepLarge) {
-  IUnknown* p = nullptr; IUIAutomationRangeValuePattern* r = nullptr;
-  if (!e || FAILED(e->GetCurrentPattern(UIA_RangeValuePatternId, &p)) || !p) return false;
-  if (FAILED(p->QueryInterface(__uuidof(IUIAutomationRangeValuePattern),
-                               reinterpret_cast<void**>(&r))) || !r) { p->Release(); return false; }
-  const bool ok =
-      SUCCEEDED(r->get_CurrentValue(&value)) && SUCCEEDED(r->get_CurrentMinimum(&lo)) &&
-      SUCCEEDED(r->get_CurrentMaximum(&hi)) && SUCCEEDED(r->get_CurrentSmallChange(&stepSmall)) &&
-      SUCCEEDED(r->get_CurrentLargeChange(&stepLarge));
-  r->Release(); p->Release();
+bool UiaValue(IUIAutomationElement* e, std::wstring& value) {
+  IUnknown* pattern = nullptr;
+  IUIAutomationValuePattern* provider = nullptr;
+  if (!e || FAILED(e->GetCurrentPattern(UIA_ValuePatternId, &pattern)) ||
+      pattern == nullptr) {
+    return false;
+  }
+  if (FAILED(pattern->QueryInterface(__uuidof(IUIAutomationValuePattern),
+                                     reinterpret_cast<void**>(&provider))) ||
+      provider == nullptr) {
+    pattern->Release();
+    return false;
+  }
+  BSTR text = nullptr;
+  const bool ok = SUCCEEDED(provider->get_CurrentValue(&text)) && text != nullptr;
+  if (ok) value = text;
+  if (text != nullptr) SysFreeString(text);
+  provider->Release();
+  pattern->Release();
   return ok;
+}
+
+bool UiaSetValue(IUIAutomationElement* e, const wchar_t* value) {
+  IUnknown* pattern = nullptr;
+  IUIAutomationValuePattern* provider = nullptr;
+  if (!e || FAILED(e->GetCurrentPattern(UIA_ValuePatternId, &pattern)) ||
+      pattern == nullptr) {
+    return false;
+  }
+  const bool queried = SUCCEEDED(pattern->QueryInterface(
+      __uuidof(IUIAutomationValuePattern), reinterpret_cast<void**>(&provider)));
+  BSTR text = SysAllocString(value);
+  const bool ok = queried && provider != nullptr && text != nullptr &&
+                  SUCCEEDED(provider->SetValue(text));
+  if (text != nullptr) SysFreeString(text);
+  if (provider != nullptr) provider->Release();
+  pattern->Release();
+  return ok;
+}
+
+class NotificationRecorder final
+    : public IUIAutomationNotificationEventHandler {
+ public:
+  NotificationRecorder() { InitializeCriticalSection(&lock_); }
+
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,
+                                            void** object) override {
+    if (object == nullptr) return E_POINTER;
+    *object = nullptr;
+    if (riid == IID_IUnknown ||
+        riid == __uuidof(IUIAutomationNotificationEventHandler)) {
+      *object = static_cast<IUIAutomationNotificationEventHandler*>(this);
+      AddRef();
+      return S_OK;
+    }
+    return E_NOINTERFACE;
+  }
+
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++references_; }
+
+  ULONG STDMETHODCALLTYPE Release() override {
+    const ULONG remaining = --references_;
+    if (remaining == 0) delete this;
+    return remaining;
+  }
+
+  HRESULT STDMETHODCALLTYPE HandleNotificationEvent(
+      IUIAutomationElement*, NotificationKind, NotificationProcessing,
+      BSTR displayString, BSTR) override {
+    EnterCriticalSection(&lock_);
+    ++count_;
+    lastText_ = displayString != nullptr ? displayString : L"";
+    LeaveCriticalSection(&lock_);
+    return S_OK;
+  }
+
+  int count() {
+    EnterCriticalSection(&lock_);
+    const int result = count_;
+    LeaveCriticalSection(&lock_);
+    return result;
+  }
+
+  std::wstring lastText() {
+    EnterCriticalSection(&lock_);
+    const std::wstring result = lastText_;
+    LeaveCriticalSection(&lock_);
+    return result;
+  }
+
+ private:
+  ~NotificationRecorder() { DeleteCriticalSection(&lock_); }
+
+  std::atomic<ULONG> references_{1};
+  CRITICAL_SECTION lock_{};
+  int count_ = 0;
+  std::wstring lastText_;
+};
+
+bool NotificationApiAvailable() {
+  HMODULE module = GetModuleHandleW(L"UIAutomationCore.dll");
+  if (module == nullptr) module = LoadLibraryW(L"UIAutomationCore.dll");
+  return module != nullptr &&
+         GetProcAddress(module, "UiaRaiseNotificationEvent") != nullptr;
 }
 
 // Resolve a captured event the way NVDA resolves a WinEvent and validate it.
@@ -596,29 +691,47 @@ void Run(const char* clapPath) {
             "focus; it is competing with the fader announcement");
   }
 
-  const double beforeDb = ParseDb(accGetValue(focusAcc, SelfChild()));
+  double beforeDb = ParseDb(accGetValue(focusAcc, SelfChild()));
   focusAcc->Release();
 
-  // ---- UIA discovers the SAME fader as a Slider with RangeValue ----
+  // ---- UIA discovers the SAME fader with a unit-bearing Value, not the
+  // ---- percentage-producing Slider/RangeValue combination ----
   {
     IUIAutomation* uia = CreateAutomation();
     require(uia != nullptr, "UI Automation client could not be created");
     IUIAutomationElement* elFader = nullptr;
     require(SUCCEEDED(uia->ElementFromHandle(fader, &elFader)) && elFader != nullptr,
             "UI Automation could not retrieve the band fader element");
-    require(UiaType(elFader) == UIA_SliderControlTypeId,
-            "UI Automation band control type is not Slider");
+    require(UiaType(elFader) == UIA_EditControlTypeId,
+            "UI Automation band control type is not Edit");
     require(UiaNative(elFader) == fader,
             "UI Automation band element is not the fader HWND");
     require(UiaAutoId(elFader).find(L"ToneTraceBand") != std::wstring::npos,
             "UI Automation band automation id does not identify the band");
-    double curVal = 0, loV = 0, hiV = 0, stepSm = 0, stepLg = 0;
-    require(UiaRangeValue(elFader, curVal, loV, hiV, stepSm, stepLg),
-            "UI Automation band does not expose RangeValue");
-    require(std::abs(curVal - beforeDb) < 1.0e-9,
-            "UI Automation RangeValue value disagrees with the MSAA value");
-    require(std::abs(stepSm - 1.0) < 1.0e-9 && std::abs(stepLg - 6.0) < 1.0e-9,
-            "UI Automation RangeValue step metadata is wrong");
+    std::wstring curVal;
+    require(UiaValue(elFader, curVal) &&
+                curVal.find(L"dB") != std::wstring::npos,
+            "UI Automation band does not expose a dB Value");
+    IUnknown* rangePattern = nullptr;
+    elFader->GetCurrentPattern(UIA_RangeValuePatternId, &rangePattern);
+    require(rangePattern == nullptr,
+            "UI Automation still exposes percentage-producing RangeValue");
+
+    // Pin a value finer than one decimal through the public UIA edit contract.
+    require(UiaSetValue(elFader, L"-6.234 dB"),
+            "UI Automation could not set an exact dB value");
+    PumpFor(100);
+    require(UiaValue(elFader, curVal) && curVal == L"-6.234 dB",
+            "UI Automation hid digits beyond one decimal place");
+    IAccessible* exactAcc = nullptr;
+    require(SUCCEEDED(AccessibleObjectFromWindow(
+                fader, static_cast<DWORD>(OBJID_CLIENT), IID_IAccessible,
+                reinterpret_cast<void**>(&exactAcc))) && exactAcc != nullptr,
+            "MSAA object unavailable after UIA exact entry");
+    require(accGetValue(exactAcc, SelfChild()) == curVal,
+            "MSAA and UIA expose different dB strings");
+    exactAcc->Release();
+    beforeDb = ParseDb(curVal);
 
     // The SAME control is discovered by walking the editor tree (not only via
     // ElementFromHandle), proving it is a composed descendant.
@@ -626,13 +739,17 @@ void Run(const char* clapPath) {
     require(SUCCEEDED(uia->ElementFromHandle(editor, &elEditor)) && elEditor != nullptr,
             "UI Automation could not retrieve the editor element");
     IUIAutomationCondition* cond = nullptr;
-    VARIANT v{}; v.vt = VT_I4; v.lVal = UIA_SliderControlTypeId;
-    require(SUCCEEDED(uia->CreatePropertyCondition(UIA_ControlTypePropertyId, v, &cond)),
-            "could not build UI Automation Slider condition");
+    VARIANT v{};
+    v.vt = VT_BSTR;
+    v.bstrVal = SysAllocString(L"ToneTraceBand1");
+    require(v.bstrVal != nullptr &&
+                SUCCEEDED(uia->CreatePropertyCondition(
+                    UIA_AutomationIdPropertyId, v, &cond)),
+            "could not build UI Automation band-id condition");
     IUIAutomationElement* found = nullptr;
     const HRESULT fr = elEditor->FindFirst(TreeScope_Descendants, cond, &found);
     require(SUCCEEDED(fr) && found != nullptr && UiaNative(found) == fader,
-            "UI Automation did not discover the band fader as a Slider "
+            "UI Automation did not discover the band fader as an Edit "
             "descendant of the editor");
     if (found) found->Release();
     if (cond) cond->Release();
@@ -664,6 +781,34 @@ void Run(const char* clapPath) {
   }
 
   // ---- Requirement 3 & 4 (value): Up, then resolve the VALUECHANGE ----
+  IUIAutomation* notificationBase = nullptr;
+  IUIAutomation5* notificationUia = nullptr;
+  IUIAutomationElement* notificationElement = nullptr;
+  NotificationRecorder* notificationRecorder = nullptr;
+  bool notificationTestAvailable = NotificationApiAvailable();
+  if (notificationTestAvailable) {
+    notificationBase = CreateAutomation();
+    require(notificationBase != nullptr,
+            "UI Automation client unavailable for notification test");
+    if (FAILED(notificationBase->QueryInterface(
+            __uuidof(IUIAutomation5),
+            reinterpret_cast<void**>(&notificationUia))) ||
+        notificationUia == nullptr) {
+      notificationBase->Release();
+      notificationBase = nullptr;
+      notificationTestAvailable = false;
+    } else {
+      require(SUCCEEDED(notificationUia->ElementFromHandle(
+                  fader, &notificationElement)) && notificationElement != nullptr,
+              "UI Automation could not retrieve the notification source");
+      notificationRecorder = new NotificationRecorder;
+      require(SUCCEEDED(notificationUia->AddNotificationEventHandler(
+                  notificationElement, TreeScope_Element, nullptr,
+                  notificationRecorder)),
+              "could not register the UIA notification handler");
+    }
+  }
+
   ClearEvents();
   SendMessageW(fader, WM_KEYDOWN, VK_UP, 0);
   PumpFor(400);
@@ -701,19 +846,34 @@ void Run(const char* clapPath) {
             "background readout edit emitted EVENT_OBJECT_VALUECHANGE on band "
             "value change; it is competing with the fader announcement");
   }
+  if (notificationTestAvailable) {
+    require(notificationRecorder->count() > 0,
+            "pressing Up produced no UIA value notification for Narrator");
+    require(notificationRecorder->lastText() == L"-5.234 dB",
+            "Narrator notification did not carry the canonical stepped dB value");
+    notificationUia->RemoveNotificationEventHandler(notificationElement,
+                                                      notificationRecorder);
+    notificationRecorder->Release();
+    notificationElement->Release();
+    notificationUia->Release();
+    notificationBase->Release();
+  } else {
+    std::puts("UIA notification client support unavailable; assertion skipped");
+  }
 
-  // ---- UIA RangeValue reflects the stepped value ----
+  // ---- UIA Value reflects the stepped value without losing the fraction ----
   {
     IUIAutomation* uia = CreateAutomation();
     require(uia != nullptr, "UI Automation client could not be created");
     IUIAutomationElement* elFader = nullptr;
     require(SUCCEEDED(uia->ElementFromHandle(fader, &elFader)) && elFader != nullptr,
             "UI Automation could not retrieve the band fader element");
-    double curVal = 0, loV = 0, hiV = 0, stepSm = 0, stepLg = 0;
-    require(UiaRangeValue(elFader, curVal, loV, hiV, stepSm, stepLg),
-            "UI Automation band does not expose RangeValue after value change");
-    require(std::abs(curVal - (beforeDb + 1.0)) < 1.0e-9,
-            "UI Automation RangeValue did not reflect the 1 dB step");
+    std::wstring curVal;
+    require(UiaValue(elFader, curVal),
+            "UI Automation band does not expose Value after value change");
+    require(curVal == L"-5.234 dB" &&
+                std::abs(ParseDb(curVal) - (beforeDb + 1.0)) < 1.0e-9,
+            "UI Automation Value did not preserve the fractional 1 dB step");
     elFader->Release();
     uia->Release();
   }

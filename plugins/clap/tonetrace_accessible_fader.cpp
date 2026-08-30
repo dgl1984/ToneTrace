@@ -3,6 +3,7 @@
 #define NOMINMAX
 #endif
 #include "tonetrace_accessible_fader.h"
+#include "tonetrace_band_value.h"
 
 #include <oleacc.h>
 #include <UIAutomationCore.h>
@@ -53,7 +54,7 @@ void RunOnGuiThread(HWND window, F&& fn) {
 // UIAutomationClient.h. This provider intentionally does not include that
 // client header because Windows SDK 10.0.26100 can collide when client and
 // provider IDL declarations are pulled into the same translation unit.
-constexpr PATTERNID kUiaRangeValuePatternId = 10003;
+constexpr PATTERNID kUiaValuePatternId = 10002;
 constexpr PROPERTYID kUiaControlTypePropertyId = 30003;
 constexpr PROPERTYID kUiaNamePropertyId = 30005;
 constexpr PROPERTYID kUiaHasKeyboardFocusPropertyId = 30008;
@@ -63,9 +64,27 @@ constexpr PROPERTYID kUiaAutomationIdPropertyId = 30011;
 constexpr PROPERTYID kUiaHelpTextPropertyId = 30013;
 constexpr PROPERTYID kUiaIsControlElementPropertyId = 30016;
 constexpr PROPERTYID kUiaIsContentElementPropertyId = 30017;
-constexpr PROPERTYID kUiaRangeValueValuePropertyId = 30047;
-constexpr CONTROLTYPEID kUiaSliderControlTypeId = 50015;
+constexpr PROPERTYID kUiaValueValuePropertyId = 30045;
+constexpr CONTROLTYPEID kUiaEditControlTypeId = 50004;
 constexpr EVENTID kUiaAutomationFocusChangedEventId = 20005;
+
+using RaiseNotificationEventFn = HRESULT(WINAPI*)(
+    IRawElementProviderSimple*, NotificationKind, NotificationProcessing,
+    BSTR, BSTR);
+
+RaiseNotificationEventFn raiseNotificationEventFn() {
+  // UiaRaiseNotificationEvent is unavailable on some Windows/Server builds.
+  // Resolve it at runtime so importing the newer API never prevents the CLAP
+  // module itself from loading on those systems.
+  static const RaiseNotificationEventFn function = [] {
+    HMODULE module = GetModuleHandleW(L"UIAutomationCore.dll");
+    if (module == nullptr) module = LoadLibraryW(L"UIAutomationCore.dll");
+    if (module == nullptr) return static_cast<RaiseNotificationEventFn>(nullptr);
+    return reinterpret_cast<RaiseNotificationEventFn>(
+        GetProcAddress(module, "UiaRaiseNotificationEvent"));
+  }();
+  return function;
+}
 
 struct FaderState {
   int band = -1;
@@ -124,9 +143,7 @@ std::wstring nameFor(const FaderState* state) {
 }
 
 std::wstring valueText(double value) {
-  wchar_t buffer[48]{};
-  std::swprintf(buffer, std::size(buffer), L"%+.1f dB", value);
-  return buffer;
+  return tonetrace::formatBandValueDbWide(value);
 }
 
 std::wstring fullText(const FaderState* state) {
@@ -149,7 +166,7 @@ bool parseExactValue(const wchar_t* text, double& value) {
 
 class FaderAccessibleProvider final : public IAccessible,
                                       public IRawElementProviderSimple,
-                                      public IRangeValueProvider {
+                                      public IValueProvider {
  public:
   explicit FaderAccessibleProvider(HWND window) : window_(window) {}
 
@@ -160,8 +177,8 @@ class FaderAccessibleProvider final : public IAccessible,
       *object = static_cast<IAccessible*>(this);
     } else if (riid == __uuidof(IRawElementProviderSimple)) {
       *object = static_cast<IRawElementProviderSimple*>(this);
-    } else if (riid == __uuidof(IRangeValueProvider)) {
-      *object = static_cast<IRangeValueProvider*>(this);
+    } else if (riid == __uuidof(IValueProvider)) {
+      *object = static_cast<IValueProvider*>(this);
     } else {
       return E_NOINTERFACE;
     }
@@ -390,8 +407,8 @@ class FaderAccessibleProvider final : public IAccessible,
                                                 IUnknown** provider) override {
     if (provider == nullptr) return E_POINTER;
     *provider = nullptr;
-    if (patternId != kUiaRangeValuePatternId) return S_OK;
-    *provider = static_cast<IRangeValueProvider*>(this);
+    if (patternId != kUiaValuePatternId) return S_OK;
+    *provider = static_cast<IValueProvider*>(this);
     AddRef();
     return S_OK;
   }
@@ -402,7 +419,9 @@ class FaderAccessibleProvider final : public IAccessible,
     VariantInit(value);
     if (propertyId == kUiaControlTypePropertyId) {
       value->vt = VT_I4;
-      value->lVal = kUiaSliderControlTypeId;
+      // UIA RangeValue has no unit-bearing string, so Narrator normalizes a
+      // Slider to a percentage. Value exposes the actual editable dB text.
+      value->lVal = kUiaEditControlTypeId;
     } else if (propertyId == kUiaNamePropertyId) {
       std::wstring text;
       RunOnGuiThread(window_, [&] { text = nameFor(state()); });
@@ -447,51 +466,26 @@ class FaderAccessibleProvider final : public IAccessible,
     return valid() ? UiaHostProviderFromHwnd(window_, provider) : S_OK;
   }
 
-  HRESULT STDMETHODCALLTYPE SetValue(double value) override {
+  HRESULT STDMETHODCALLTYPE SetValue(LPCWSTR value) override {
+    double parsed = 0.0;
+    if (!parseExactValue(value, parsed)) return E_INVALIDARG;
     bool ok = false;
-    RunOnGuiThread(window_, [&] { ok = setExactValue(value); });
+    RunOnGuiThread(window_, [&] { ok = setExactValue(parsed); });
     return ok ? S_OK : E_FAIL;
   }
 
-  HRESULT STDMETHODCALLTYPE get_Value(double* value) override {
+  HRESULT STDMETHODCALLTYPE get_Value(BSTR* value) override {
     if (value == nullptr) return E_POINTER;
-    double result = 0.0;
-    RunOnGuiThread(window_, [&] { result = valueFor(state()); });
-    *value = result;
-    return S_OK;
+    *value = nullptr;
+    std::wstring text;
+    RunOnGuiThread(window_, [&] { text = valueText(valueFor(state())); });
+    *value = SysAllocString(text.c_str());
+    return *value != nullptr ? S_OK : E_OUTOFMEMORY;
   }
 
   HRESULT STDMETHODCALLTYPE get_IsReadOnly(BOOL* readOnly) override {
     if (readOnly == nullptr) return E_POINTER;
     *readOnly = FALSE;
-    return S_OK;
-  }
-
-  HRESULT STDMETHODCALLTYPE get_Maximum(double* maximum) override {
-    if (maximum == nullptr) return E_POINTER;
-    double result = 0.0;
-    RunOnGuiThread(window_, [&] { result = maximumFor(state()); });
-    *maximum = result;
-    return S_OK;
-  }
-
-  HRESULT STDMETHODCALLTYPE get_Minimum(double* minimum) override {
-    if (minimum == nullptr) return E_POINTER;
-    double result = 0.0;
-    RunOnGuiThread(window_, [&] { result = minimumFor(state()); });
-    *minimum = result;
-    return S_OK;
-  }
-
-  HRESULT STDMETHODCALLTYPE get_LargeChange(double* change) override {
-    if (change == nullptr) return E_POINTER;
-    *change = 6.0;
-    return S_OK;
-  }
-
-  HRESULT STDMETHODCALLTYPE get_SmallChange(double* change) override {
-    if (change == nullptr) return E_POINTER;
-    *change = 1.0;
     return S_OK;
   }
 
@@ -546,14 +540,37 @@ void raiseValueChanged(HWND window, double oldValue, double newValue) {
   FaderAccessibleProvider* provider = providerFor(window, true);
   if (provider == nullptr) return;
   VARIANT oldVariant{};
-  oldVariant.vt = VT_R8;
-  oldVariant.dblVal = oldValue;
+  oldVariant.vt = VT_BSTR;
+  oldVariant.bstrVal = SysAllocString(valueText(oldValue).c_str());
   VARIANT newVariant{};
-  newVariant.vt = VT_R8;
-  newVariant.dblVal = newValue;
-  UiaRaiseAutomationPropertyChangedEvent(
-      static_cast<IRawElementProviderSimple*>(provider),
-      kUiaRangeValueValuePropertyId, oldVariant, newVariant);
+  newVariant.vt = VT_BSTR;
+  newVariant.bstrVal = SysAllocString(valueText(newValue).c_str());
+  if (oldVariant.bstrVal != nullptr && newVariant.bstrVal != nullptr) {
+    UiaRaiseAutomationPropertyChangedEvent(
+        static_cast<IRawElementProviderSimple*>(provider),
+        kUiaValueValuePropertyId, oldVariant, newVariant);
+
+    // Narrator reads the unit-bearing Value on focus, but does not announce a
+    // custom Edit provider's Value-property change after Up/Down. A focused
+    // UIA notification supplies that same canonical dB string without changing
+    // NVDA's established MSAA VALUECHANGE path. MostRecent coalesces rapid key
+    // repeats instead of building an announcement backlog.
+    FaderState* current = stateFor(window);
+    if (current != nullptr &&
+        current->focused_.load(std::memory_order_relaxed)) {
+      BSTR activity = SysAllocString(L"ToneTraceBandValue");
+      RaiseNotificationEventFn raiseNotification = raiseNotificationEventFn();
+      if (activity != nullptr && raiseNotification != nullptr) {
+        raiseNotification(
+            static_cast<IRawElementProviderSimple*>(provider),
+            NotificationKind_ActionCompleted, NotificationProcessing_MostRecent,
+            newVariant.bstrVal, activity);
+        SysFreeString(activity);
+      }
+    }
+  }
+  VariantClear(&oldVariant);
+  VariantClear(&newVariant);
 }
 
 void raiseFocus(HWND window) {
@@ -668,12 +685,12 @@ void openExactEditor(HWND fader, POINT anchor) {
                  std::max(static_cast<int>(work.top),
                           static_cast<int>(work.bottom) - height));
 
-  wchar_t initial[48]{};
-  std::swprintf(initial, std::size(initial), L"%.1f", valueFor(state));
+  const std::wstring initial =
+      tonetrace::formatBandValueDbWide(valueFor(state), false);
   HWND owner = GetAncestor(fader, GA_ROOT);
   if (owner == nullptr) owner = GetParent(fader);
   HWND edit = CreateWindowExW(
-      WS_EX_TOOLWINDOW, L"EDIT", initial,
+      WS_EX_TOOLWINDOW, L"EDIT", initial.c_str(),
       WS_POPUP | WS_BORDER | ES_AUTOHSCROLL,
       x, y, width, height, owner, nullptr,
       reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(fader, GWLP_HINSTANCE)), nullptr);

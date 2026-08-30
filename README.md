@@ -14,8 +14,8 @@ Tone Trace EQ is a free match EQ from **Lanes Audio** and ships as a CLAP plug-i
 
 ## Download and install
 
-The 1.0.2 binary release is **Windows 10/11 x64**. Download the one
-release asset named `ToneTrace_EQ_1.0.2_Windows_x64.zip`, extract it, and copy
+The 1.0.3 binary release is **Windows 10/11 x64**. Download the one
+release asset named `ToneTrace_EQ_1.0.3_Windows_x64.zip`, extract it, and copy
 `plugins\clap\Tone Trace EQ.clap` to:
 
 `C:\Program Files\Common Files\CLAP\`
@@ -25,7 +25,7 @@ documentation, licenses, and `docs\BUILD_MANIFEST.txt` with a SHA-256 hash for
 every packaged file. It contains no installer, developer tools, tests, or debug
 symbols, and it changes nothing until you copy the `.clap` file.
 
-Source builds are possible on other C++20 platforms, but 1.0.2 does not claim a
+Source builds are possible on other C++20 platforms, but 1.0.3 does not claim a
 supported non-Windows binary release or native non-Windows custom editor.
 
 ## The one rule to remember
@@ -89,8 +89,8 @@ Tone Trace 1.0 ships as **CLAP**.
 The Windows CLAP build includes the native accessible editor. The custom editor
 is Windows-only; non-Windows source builds use the host's CLAP parameter view.
 
-Version 1.0.2 has one release asset:
-`ToneTrace_EQ_1.0.2_Windows_x64.zip`. Per-file SHA-256 hashes are stored inside
+Version 1.0.3 has one release asset:
+`ToneTrace_EQ_1.0.3_Windows_x64.zip`. Per-file SHA-256 hashes are stored inside
 that ZIP in `docs/BUILD_MANIFEST.txt`.
 
 ## Tone Trace is an EQ matcher, not a limiter
@@ -106,7 +106,7 @@ Exported IRs remain linear and do not include the Emergency Clip Guard. If the f
 - **[GUI_DESIGN.md](GUI_DESIGN.md)** — native editor and accessibility design.
 - **[plugins/README.md](plugins/README.md)** — wrapper implementation and host-boundary details.
 - **[CHANGELOG.md](CHANGELOG.md)** — versioned user-visible changes.
-- **[RELEASE_NOTES.md](RELEASE_NOTES.md)** — exact 1.0.2 asset contents and release checks.
+- **[RELEASE_NOTES.md](RELEASE_NOTES.md)** — 1.0.3 summary, asset contents, and installation.
 - **[RELEASING.md](RELEASING.md)** — deterministic build, verification, tag, and upload procedure.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — build, testing, and accessibility invariants for changes.
 - **[SECURITY.md](SECURITY.md)** — private vulnerability-reporting policy.
@@ -131,7 +131,7 @@ It does not install or replace plug-ins on the machine.
 ### Other platforms
 
 `CMakePresets.json` contains macOS universal and Linux verification presets for
-developers. There is no 1.0.2 macOS/Linux release builder or supported binary
+developers. There is no 1.0.3 macOS/Linux release builder or supported binary
 asset, and the custom native editor remains Windows-only.
 
 ### Developer path
