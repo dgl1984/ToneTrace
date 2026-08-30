@@ -68,6 +68,24 @@ constexpr PROPERTYID kUiaValueValuePropertyId = 30045;
 constexpr CONTROLTYPEID kUiaEditControlTypeId = 50004;
 constexpr EVENTID kUiaAutomationFocusChangedEventId = 20005;
 
+using RaiseNotificationEventFn = HRESULT(WINAPI*)(
+    IRawElementProviderSimple*, NotificationKind, NotificationProcessing,
+    BSTR, BSTR);
+
+RaiseNotificationEventFn raiseNotificationEventFn() {
+  // UiaRaiseNotificationEvent is unavailable on some Windows/Server builds.
+  // Resolve it at runtime so importing the newer API never prevents the CLAP
+  // module itself from loading on those systems.
+  static const RaiseNotificationEventFn function = [] {
+    HMODULE module = GetModuleHandleW(L"UIAutomationCore.dll");
+    if (module == nullptr) module = LoadLibraryW(L"UIAutomationCore.dll");
+    if (module == nullptr) return static_cast<RaiseNotificationEventFn>(nullptr);
+    return reinterpret_cast<RaiseNotificationEventFn>(
+        GetProcAddress(module, "UiaRaiseNotificationEvent"));
+  }();
+  return function;
+}
+
 struct FaderState {
   int band = -1;
   AccessibleFaderCallbacks callbacks{};
@@ -541,8 +559,9 @@ void raiseValueChanged(HWND window, double oldValue, double newValue) {
     if (current != nullptr &&
         current->focused_.load(std::memory_order_relaxed)) {
       BSTR activity = SysAllocString(L"ToneTraceBandValue");
-      if (activity != nullptr) {
-        UiaRaiseNotificationEvent(
+      RaiseNotificationEventFn raiseNotification = raiseNotificationEventFn();
+      if (activity != nullptr && raiseNotification != nullptr) {
+        raiseNotification(
             static_cast<IRawElementProviderSimple*>(provider),
             NotificationKind_ActionCompleted, NotificationProcessing_MostRecent,
             newVariant.bstrVal, activity);

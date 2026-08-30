@@ -432,6 +432,13 @@ class NotificationRecorder final
   std::wstring lastText_;
 };
 
+bool NotificationApiAvailable() {
+  HMODULE module = GetModuleHandleW(L"UIAutomationCore.dll");
+  if (module == nullptr) module = LoadLibraryW(L"UIAutomationCore.dll");
+  return module != nullptr &&
+         GetProcAddress(module, "UiaRaiseNotificationEvent") != nullptr;
+}
+
 // Resolve a captured event the way NVDA resolves a WinEvent and validate it.
 IAccessible* ResolveEventToFader(const WinEventRec& e, HWND fader,
                                  LONG expectedClass) {
@@ -774,24 +781,29 @@ void Run(const char* clapPath) {
   }
 
   // ---- Requirement 3 & 4 (value): Up, then resolve the VALUECHANGE ----
-  IUIAutomation* notificationBase = CreateAutomation();
-  require(notificationBase != nullptr,
-          "UI Automation client unavailable for notification test");
+  IUIAutomation* notificationBase = nullptr;
   IUIAutomation5* notificationUia = nullptr;
-  require(SUCCEEDED(notificationBase->QueryInterface(
-              __uuidof(IUIAutomation5),
-              reinterpret_cast<void**>(&notificationUia))) &&
-              notificationUia != nullptr,
-          "UI Automation 5 notification interface is unavailable");
   IUIAutomationElement* notificationElement = nullptr;
-  require(SUCCEEDED(notificationUia->ElementFromHandle(
-              fader, &notificationElement)) && notificationElement != nullptr,
-          "UI Automation could not retrieve the notification source");
-  auto* notificationRecorder = new NotificationRecorder;
-  require(SUCCEEDED(notificationUia->AddNotificationEventHandler(
-              notificationElement, TreeScope_Element, nullptr,
-              notificationRecorder)),
-          "could not register the UIA notification handler");
+  NotificationRecorder* notificationRecorder = nullptr;
+  const bool notificationApiAvailable = NotificationApiAvailable();
+  if (notificationApiAvailable) {
+    notificationBase = CreateAutomation();
+    require(notificationBase != nullptr,
+            "UI Automation client unavailable for notification test");
+    require(SUCCEEDED(notificationBase->QueryInterface(
+                __uuidof(IUIAutomation5),
+                reinterpret_cast<void**>(&notificationUia))) &&
+                notificationUia != nullptr,
+            "UI Automation 5 notification interface is unavailable");
+    require(SUCCEEDED(notificationUia->ElementFromHandle(
+                fader, &notificationElement)) && notificationElement != nullptr,
+            "UI Automation could not retrieve the notification source");
+    notificationRecorder = new NotificationRecorder;
+    require(SUCCEEDED(notificationUia->AddNotificationEventHandler(
+                notificationElement, TreeScope_Element, nullptr,
+                notificationRecorder)),
+            "could not register the UIA notification handler");
+  }
 
   ClearEvents();
   SendMessageW(fader, WM_KEYDOWN, VK_UP, 0);
@@ -830,16 +842,20 @@ void Run(const char* clapPath) {
             "background readout edit emitted EVENT_OBJECT_VALUECHANGE on band "
             "value change; it is competing with the fader announcement");
   }
-  require(notificationRecorder->count() > 0,
-          "pressing Up produced no UIA value notification for Narrator");
-  require(notificationRecorder->lastText() == L"-5.234 dB",
-          "Narrator notification did not carry the canonical stepped dB value");
-  notificationUia->RemoveNotificationEventHandler(notificationElement,
-                                                    notificationRecorder);
-  notificationRecorder->Release();
-  notificationElement->Release();
-  notificationUia->Release();
-  notificationBase->Release();
+  if (notificationApiAvailable) {
+    require(notificationRecorder->count() > 0,
+            "pressing Up produced no UIA value notification for Narrator");
+    require(notificationRecorder->lastText() == L"-5.234 dB",
+            "Narrator notification did not carry the canonical stepped dB value");
+    notificationUia->RemoveNotificationEventHandler(notificationElement,
+                                                      notificationRecorder);
+    notificationRecorder->Release();
+    notificationElement->Release();
+    notificationUia->Release();
+    notificationBase->Release();
+  } else {
+    std::puts("UIA notification API unavailable; notification assertion skipped");
+  }
 
   // ---- UIA Value reflects the stepped value without losing the fraction ----
   {
