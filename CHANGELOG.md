@@ -5,6 +5,8 @@ versioning, and release dates use `YYYY-MM-DD`.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-08-30
+
 ### Added
 
 - Impulse-response export now supports a manually created graphic-EQ curve
@@ -25,6 +27,7 @@ versioning, and release dates use `YYYY-MM-DD`.
   visible label aligned to the correct value field and keyboard position.
 - Narrator now receives the complete dB string as a focused UIA notification
   when a band changes, including Up/Down adjustments.
+
 ## [1.0.2] - 2026-08-29
 
 ### Added
