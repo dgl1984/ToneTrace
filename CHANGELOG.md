@@ -21,6 +21,12 @@ versioning, and release dates use `YYYY-MM-DD`.
 - One- and six-dB keyboard adjustments preserve the existing fractional value.
 - Changing Correction Resolution while the editor is open now redraws the tab
   strip and refreshes cached screen-reader labels when pages are added or removed.
+- Emergency Clip Guard now appears immediately after Correction Gain, with its
+  visible label aligned to the correct value field and keyboard position.
+- Narrator now receives the complete dB string as a focused UIA notification
+  when a band changes, including Up/Down adjustments.
+- The manual-IR warning now uses an accessible task dialog with OK as the
+  default, so NVDA can announce the warning text when the dialog opens.
 
 ## [1.0.2] - 2026-08-29
 

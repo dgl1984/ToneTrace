@@ -95,8 +95,8 @@ Rules from the OptiLab study applied here:
   and cached screen-reader tab labels stay synchronized.
 - IR export accepts the same manual-only curve used by standalone graphic-EQ
   operation. With no learned match, a nonzero band or Correction Gain opens a
-  native OK/Cancel warning whose safe default is Cancel; a completely flat
-  unmatched instance keeps the existing no-curve error.
+  native accessible OK/Cancel task dialog with OK as the default; a completely
+  flat unmatched instance keeps the existing no-curve error.
 - The mouse wheel adjusts a hovered/focused band in the same 1 dB steps as the
   arrow keys. Hover, focus, positive movement, and negative movement use
   distinct visual states.

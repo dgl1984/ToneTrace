@@ -9,6 +9,8 @@
 //   - UIA: the SAME control is discovered from the editor tree as an Edit and
 //     exposes a unit-bearing string Value. It deliberately does not expose
 //     RangeValue, which makes Narrator normalize sliders to percentages.
+//     Focused value changes also emit the canonical dB text as a notification,
+//     which gives Narrator a spoken Up/Down result.
 //   - Focus/value events do not duplicate or compete: the background read-only
 //     readout edit must NOT emit a competing EVENT_OBJECT_VALUECHANGE merely
 //     because band focus or value changed.
@@ -371,6 +373,65 @@ bool UiaSetValue(IUIAutomationElement* e, const wchar_t* value) {
   return ok;
 }
 
+class NotificationRecorder final
+    : public IUIAutomationNotificationEventHandler {
+ public:
+  NotificationRecorder() { InitializeCriticalSection(&lock_); }
+
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,
+                                            void** object) override {
+    if (object == nullptr) return E_POINTER;
+    *object = nullptr;
+    if (riid == IID_IUnknown ||
+        riid == __uuidof(IUIAutomationNotificationEventHandler)) {
+      *object = static_cast<IUIAutomationNotificationEventHandler*>(this);
+      AddRef();
+      return S_OK;
+    }
+    return E_NOINTERFACE;
+  }
+
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++references_; }
+
+  ULONG STDMETHODCALLTYPE Release() override {
+    const ULONG remaining = --references_;
+    if (remaining == 0) delete this;
+    return remaining;
+  }
+
+  HRESULT STDMETHODCALLTYPE HandleNotificationEvent(
+      IUIAutomationElement*, NotificationKind, NotificationProcessing,
+      BSTR displayString, BSTR) override {
+    EnterCriticalSection(&lock_);
+    ++count_;
+    lastText_ = displayString != nullptr ? displayString : L"";
+    LeaveCriticalSection(&lock_);
+    return S_OK;
+  }
+
+  int count() {
+    EnterCriticalSection(&lock_);
+    const int result = count_;
+    LeaveCriticalSection(&lock_);
+    return result;
+  }
+
+  std::wstring lastText() {
+    EnterCriticalSection(&lock_);
+    const std::wstring result = lastText_;
+    LeaveCriticalSection(&lock_);
+    return result;
+  }
+
+ private:
+  ~NotificationRecorder() override { DeleteCriticalSection(&lock_); }
+
+  std::atomic<ULONG> references_{1};
+  CRITICAL_SECTION lock_{};
+  int count_ = 0;
+  std::wstring lastText_;
+};
+
 // Resolve a captured event the way NVDA resolves a WinEvent and validate it.
 IAccessible* ResolveEventToFader(const WinEventRec& e, HWND fader,
                                  LONG expectedClass) {
@@ -713,6 +774,25 @@ void Run(const char* clapPath) {
   }
 
   // ---- Requirement 3 & 4 (value): Up, then resolve the VALUECHANGE ----
+  IUIAutomation* notificationBase = CreateAutomation();
+  require(notificationBase != nullptr,
+          "UI Automation client unavailable for notification test");
+  IUIAutomation5* notificationUia = nullptr;
+  require(SUCCEEDED(notificationBase->QueryInterface(
+              __uuidof(IUIAutomation5),
+              reinterpret_cast<void**>(&notificationUia))) &&
+              notificationUia != nullptr,
+          "UI Automation 5 notification interface is unavailable");
+  IUIAutomationElement* notificationElement = nullptr;
+  require(SUCCEEDED(notificationUia->ElementFromHandle(
+              fader, &notificationElement)) && notificationElement != nullptr,
+          "UI Automation could not retrieve the notification source");
+  auto* notificationRecorder = new NotificationRecorder;
+  require(SUCCEEDED(notificationUia->AddNotificationEventHandler(
+              notificationElement, TreeScope_Element, nullptr,
+              notificationRecorder)),
+          "could not register the UIA notification handler");
+
   ClearEvents();
   SendMessageW(fader, WM_KEYDOWN, VK_UP, 0);
   PumpFor(400);
@@ -750,6 +830,16 @@ void Run(const char* clapPath) {
             "background readout edit emitted EVENT_OBJECT_VALUECHANGE on band "
             "value change; it is competing with the fader announcement");
   }
+  require(notificationRecorder->count() > 0,
+          "pressing Up produced no UIA value notification for Narrator");
+  require(notificationRecorder->lastText() == L"-5.234 dB",
+          "Narrator notification did not carry the canonical stepped dB value");
+  notificationUia->RemoveNotificationEventHandler(notificationElement,
+                                                    notificationRecorder);
+  notificationRecorder->Release();
+  notificationElement->Release();
+  notificationUia->Release();
+  notificationBase->Release();
 
   // ---- UIA Value reflects the stepped value without losing the fraction ----
   {

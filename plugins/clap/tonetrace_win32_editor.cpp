@@ -92,10 +92,12 @@ constexpr tonetrace::ParameterId kEditedParams[]{
     tonetrace::ParameterId::CorrectionStrength,
     tonetrace::ParameterId::MaximumCorrectionDb,
     tonetrace::ParameterId::CorrectionGainDb,
+    // Keep the last-resort guard immediately after the gain that can expose
+    // peaks. The label, edit, and tab order all derive from this one array.
+    tonetrace::ParameterId::EmergencyClipGuardDb,
     tonetrace::ParameterId::CorrectionSharpness,
     tonetrace::ParameterId::RangeLowHz,
     tonetrace::ParameterId::RangeHighHz,
-    tonetrace::ParameterId::EmergencyClipGuardDb,
 };
 
 constexpr double kLogLowHz = 20.0;
@@ -222,6 +224,36 @@ void addControlTooltip(HWND tooltip, HWND owner, HWND control,
   tool.uId = reinterpret_cast<UINT_PTR>(control);
   tool.lpszText = const_cast<LPWSTR>(text);
   SendMessageW(tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+}
+
+int confirmManualIrExport(HWND owner) {
+  TASKDIALOGCONFIG config{};
+  config.cbSize = sizeof(config);
+  config.hwndParent = owner;
+  config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
+  config.dwCommonButtons = TDCBF_OK_BUTTON | TDCBF_CANCEL_BUTTON;
+  config.pszWindowTitle = L"Export Manual Curve";
+  config.pszMainInstruction = L"Export the manually created curve?";
+  config.pszContent =
+      L"No learned match is available. Tone Trace will export an impulse "
+      L"response of the manually created curve that is currently active.";
+  config.pszMainIcon = TD_WARNING_ICON;
+  config.nDefaultButton = IDOK;
+
+  int button = IDCANCEL;
+  if (SUCCEEDED(TaskDialogIndirect(&config, &button, nullptr, nullptr))) {
+    return button;
+  }
+
+  // TaskDialog is available on supported Windows versions, but retain a
+  // standard accessible fallback for an unusual host/common-controls setup.
+  return MessageBoxW(
+      owner,
+      L"No learned match is available. Tone Trace will export an impulse "
+      L"response of the manually created curve that is currently active.\n\n"
+      L"Continue?",
+      L"Export Manual Curve",
+      MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON1);
 }
 
 }  // namespace
@@ -2331,13 +2363,7 @@ void ToneTraceWin32Editor::Impl::exportCurve(int menuId) {
                   L"Tone Trace EQ", MB_OK | MB_ICONINFORMATION);
       return;
     }
-    const int answer = MessageBoxW(
-        window_,
-        L"No learned match is available. Tone Trace will export an impulse "
-        L"response of the manually created curve that is currently active.\n\n"
-        L"Continue?",
-        L"Export Manual Curve?",
-        MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
+    const int answer = confirmManualIrExport(window_);
     if (answer != IDOK) return;
     exportManualIr = true;
   }

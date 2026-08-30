@@ -35,6 +35,7 @@ constexpr int kExportId = 106;
 constexpr int kImportId = 107;
 constexpr int kModeComboId = 200;
 constexpr int kEditFirstId = 300;
+constexpr int kEmergencyGuardEditId = kEditFirstId + 3;
 constexpr int kBandSliderFirstId = 2000;
 
 void require(bool condition, const std::string& message) {
@@ -383,6 +384,25 @@ void verifyKnownGoodKeyboardBaseline(HWND editor) {
       requireNextTab(editor, edit, false, id + 1, "value edit ordering");
     }
   }
+
+  // Correction Gain is edit 302; the safety guard must immediately follow it
+  // as edit 303, with its visible STATIC label directly above the same field.
+  HWND guardEdit = GetDlgItem(editor, kEmergencyGuardEditId);
+  HWND guardLabel = FindWindowExW(
+      editor, nullptr, L"STATIC", L"Emergency Clip Guard");
+  require(guardEdit != nullptr && guardLabel != nullptr,
+          "Emergency Clip Guard label/edit pair is missing");
+  require(textOf(guardEdit).find(L"6.0") != std::wstring::npos,
+          "the field after Correction Gain is not Emergency Clip Guard");
+  RECT guardEditRect{};
+  RECT guardLabelRect{};
+  require(GetWindowRect(guardEdit, &guardEditRect) &&
+              GetWindowRect(guardLabel, &guardLabelRect),
+          "could not measure Emergency Clip Guard label/edit pair");
+  require(guardLabelRect.left == guardEditRect.left &&
+              guardLabelRect.right == guardEditRect.right &&
+              guardLabelRect.bottom <= guardEditRect.top,
+          "Emergency Clip Guard label is not directly above its value field");
 
   std::vector<HWND> readonlyMultiline;
   EnumChildWindows(

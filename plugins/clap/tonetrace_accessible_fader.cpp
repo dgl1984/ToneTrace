@@ -531,6 +531,24 @@ void raiseValueChanged(HWND window, double oldValue, double newValue) {
     UiaRaiseAutomationPropertyChangedEvent(
         static_cast<IRawElementProviderSimple*>(provider),
         kUiaValueValuePropertyId, oldVariant, newVariant);
+
+    // Narrator reads the unit-bearing Value on focus, but does not announce a
+    // custom Edit provider's Value-property change after Up/Down. A focused
+    // UIA notification supplies that same canonical dB string without changing
+    // NVDA's established MSAA VALUECHANGE path. MostRecent coalesces rapid key
+    // repeats instead of building an announcement backlog.
+    FaderState* current = stateFor(window);
+    if (current != nullptr &&
+        current->focused_.load(std::memory_order_relaxed)) {
+      BSTR activity = SysAllocString(L"ToneTraceBandValue");
+      if (activity != nullptr) {
+        UiaRaiseNotificationEvent(
+            static_cast<IRawElementProviderSimple*>(provider),
+            NotificationKind_ActionCompleted, NotificationProcessing_MostRecent,
+            newVariant.bstrVal, activity);
+        SysFreeString(activity);
+      }
+    }
   }
   VariantClear(&oldVariant);
   VariantClear(&newVariant);
