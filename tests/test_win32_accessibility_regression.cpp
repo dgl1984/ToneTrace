@@ -424,7 +424,7 @@ class NotificationRecorder final
   }
 
  private:
-  ~NotificationRecorder() override { DeleteCriticalSection(&lock_); }
+  ~NotificationRecorder() { DeleteCriticalSection(&lock_); }
 
   std::atomic<ULONG> references_{1};
   CRITICAL_SECTION lock_{};
