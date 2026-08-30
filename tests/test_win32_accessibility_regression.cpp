@@ -362,8 +362,10 @@ bool UiaSetValue(IUIAutomationElement* e, const wchar_t* value) {
   }
   const bool queried = SUCCEEDED(pattern->QueryInterface(
       __uuidof(IUIAutomationValuePattern), reinterpret_cast<void**>(&provider)));
-  const bool ok = queried && provider != nullptr &&
-                  SUCCEEDED(provider->SetValue(value));
+  BSTR text = SysAllocString(value);
+  const bool ok = queried && provider != nullptr && text != nullptr &&
+                  SUCCEEDED(provider->SetValue(text));
+  if (text != nullptr) SysFreeString(text);
   if (provider != nullptr) provider->Release();
   pattern->Release();
   return ok;
