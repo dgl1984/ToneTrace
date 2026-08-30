@@ -931,30 +931,12 @@ ProfileValidation HeadlessPluginCore::commitCandidate(
 ProfileValidation HeadlessPluginCore::commitManualCorrection(
     const IrRenderSettings& settings) {
   try {
-    const bool flat = std::abs(settings.correctionGainDb) < 1.0e-12 &&
-                      std::all_of(settings.manualGains.begin(),
-                                  settings.manualGains.end(),
-                                  [](double gain) {
-                                    return std::isfinite(gain) &&
-                                           std::abs(gain) < 1.0e-12;
-                                  });
-    if (flat) {
+    if (!hasManualCorrection(settings)) {
       const auto result = commitKernel({1.0});
       if (result.accepted) snapshot_.reset();
       return result;
     }
-
-    CorrectionModel flatModel;
-    flatModel.mode = MatchMode::FullMix;
-    flatModel.analysisLowHz = 20.0;
-    flatModel.analysisHighHz = 20000.0;
-    flatModel.resolution = std::max(
-        1, static_cast<int>(settings.manualGains.size()));
-    flatModel.nodes = {
-        {20.0, 0.0, 1.0},
-        {20000.0, 0.0, 1.0},
-    };
-    const auto kernel = renderMinimumPhaseIr(flatModel, settings);
+    const auto kernel = renderManualCorrectionIr(settings);
     const auto result = commitKernel(kernel);
     if (result.accepted) snapshot_.reset();
     return result;

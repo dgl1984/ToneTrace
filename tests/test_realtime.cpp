@@ -552,6 +552,8 @@ void testManualOnlyGraphicEq() {
   settings.rangeHighHz = 20000.0;
   settings.manualGains.assign(30, 0.0);
   settings.manualGains[15] = 6.0;
+  require(tonetrace::hasManualCorrection(settings),
+          "A nonzero graphic-EQ band was classified as flat");
 
   const auto committed = core.commitManualCorrection(settings);
   require(committed.accepted,
@@ -565,13 +567,7 @@ void testManualOnlyGraphicEq() {
               !restored.snapshot,
           "Manual-only graphic EQ leaked into learned-profile project state");
 
-  tonetrace::CorrectionModel flatModel;
-  flatModel.mode = tonetrace::MatchMode::FullMix;
-  flatModel.analysisLowHz = 20.0;
-  flatModel.analysisHighHz = 20000.0;
-  flatModel.resolution = 30;
-  flatModel.nodes = {{20.0, 0.0, 1.0}, {20000.0, 0.0, 1.0}};
-  const auto expected = tonetrace::renderMinimumPhaseIr(flatModel, settings);
+  const auto expected = tonetrace::renderManualCorrectionIr(settings);
   std::vector<float> impulse(expected.size() + 64U, 0.0F);
   impulse[0] = 1.0F;
   std::vector<float> output(impulse.size(), 0.0F);
@@ -585,6 +581,8 @@ void testManualOnlyGraphicEq() {
 
   tonetrace::HeadlessPluginCore flat(config);
   settings.manualGains.assign(30, 0.0);
+  require(!tonetrace::hasManualCorrection(settings),
+          "A zeroed graphic EQ was classified as altered");
   require(flat.commitManualCorrection(settings).accepted,
           "A flat manual-only curve was rejected");
   std::vector<float> dry(128, 0.125F);
@@ -594,6 +592,12 @@ void testManualOnlyGraphicEq() {
   flat.process(dryIn, wetOut, 1, dry.size());
   require(std::equal(dry.begin(), dry.end(), wet.begin()),
           "A zeroed graphic EQ did not remain bit-exact bypass");
+
+  settings.correctionGainDb = 2.25;
+  require(tonetrace::hasManualCorrection(settings),
+          "A nonzero global Correction Gain was classified as flat");
+  require(!tonetrace::renderManualCorrectionIr(settings).empty(),
+          "A gain-only manual correction did not render an IR");
 
   std::cout << "manual-only graphic EQ without learned profile: passed\n";
 }

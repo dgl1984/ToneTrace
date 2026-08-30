@@ -149,6 +149,19 @@ struct IrRenderSettings {
   std::vector<double> manualGains;
 };
 
+// A manual-only curve is meaningful when either the global correction gain or
+// at least one graphic-EQ band differs from zero. Non-finite values count as
+// active here so callers pass them to the renderer's normal validation instead
+// of accidentally treating invalid state as a flat curve.
+[[nodiscard]] bool hasManualCorrection(
+    const IrRenderSettings& settings) noexcept;
+
+// Renders the exact curve used by manual-only plug-in operation: a flat learned
+// model plus Correction Gain, Correction Range, and the editable band gains.
+// Callers should use hasManualCorrection() first when a flat curve is an error.
+[[nodiscard]] std::vector<double> renderManualCorrectionIr(
+    const IrRenderSettings& settings);
+
 // Linear-in-log interpolation of the manual trim at a frequency. An empty
 // vector contributes 0 dB; a single entry applies flat; otherwise the grid is
 // log-spaced across [lowHz, highHz] (clamped to 20 Hz..20 kHz) with one point

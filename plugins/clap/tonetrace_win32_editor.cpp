@@ -579,6 +579,7 @@ class ToneTraceWin32Editor::Impl {
   void showTransferMenu(bool exportMenu);
   void exportCurve(int menuId);
   void importCurve(int menuId);
+  [[nodiscard]] tonetrace::IrRenderSettings currentManualIrSettings() const;
   [[nodiscard]] bool chooseSavePath(const wchar_t* filter,
                                     const wchar_t* defaultExt,
                                     std::wstring& path) const;
@@ -2294,7 +2295,53 @@ void ToneTraceWin32Editor::Impl::showTransferMenu(bool exportMenu) {
   DestroyMenu(menu);
 }
 
+tonetrace::IrRenderSettings
+ToneTraceWin32Editor::Impl::currentManualIrSettings() const {
+  tonetrace::IrRenderSettings settings;
+  const double sampleRate =
+      getSampleRate_ != nullptr ? getSampleRate_(context_) : 0.0;
+  settings.sampleRate = static_cast<int>(std::lround(sampleRate));
+  settings.correctionStrength =
+      paramValue(tonetrace::ParameterId::CorrectionStrength);
+  settings.correctionSharpness =
+      paramValue(tonetrace::ParameterId::CorrectionSharpness);
+  settings.correctionGainDb =
+      paramValue(tonetrace::ParameterId::CorrectionGainDb);
+  settings.rangeLowHz = paramValue(tonetrace::ParameterId::RangeLowHz);
+  settings.rangeHighHz = paramValue(tonetrace::ParameterId::RangeHighHz);
+  const std::size_t count =
+      getBandCount_ != nullptr ? getBandCount_(context_) : 0U;
+  settings.manualGains.reserve(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    settings.manualGains.push_back(
+        getBandGain_ != nullptr ? getBandGain_(context_, index) : 0.0);
+  }
+  return settings;
+}
+
 void ToneTraceWin32Editor::Impl::exportCurve(int menuId) {
+  const auto* snapshot =
+      getSnapshot_ != nullptr ? getSnapshot_(context_) : nullptr;
+  tonetrace::IrRenderSettings manualSettings;
+  bool exportManualIr = false;
+  if (menuId == kExportIr && snapshot == nullptr) {
+    manualSettings = currentManualIrSettings();
+    if (!tonetrace::hasManualCorrection(manualSettings)) {
+      MessageBoxW(window_, L"No matching curve is available to export yet.",
+                  L"Tone Trace EQ", MB_OK | MB_ICONINFORMATION);
+      return;
+    }
+    const int answer = MessageBoxW(
+        window_,
+        L"No learned match is available. Tone Trace will export an impulse "
+        L"response of the manually created curve that is currently active.\n\n"
+        L"Continue?",
+        L"Export Manual Curve?",
+        MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
+    if (answer != IDOK) return;
+    exportManualIr = true;
+  }
+
   std::wstring path;
   switch (menuId) {
     case kExportIr:
@@ -2312,15 +2359,13 @@ void ToneTraceWin32Editor::Impl::exportCurve(int menuId) {
     default:
       return;
   }
-  const auto* snapshot =
-      getSnapshot_ != nullptr ? getSnapshot_(context_) : nullptr;
   const auto stagedSpectrum = [&](int which)
       -> const tonetrace::SpectrumCapture* {
     return getStagedSpectrum_ != nullptr
                ? getStagedSpectrum_(context_, which)
                : nullptr;
   };
-  if (snapshot == nullptr &&
+  if (snapshot == nullptr && !exportManualIr &&
       !((menuId == kExportReference && stagedSpectrum(1) != nullptr) ||
         (menuId == kExportTarget && stagedSpectrum(2) != nullptr))) {
     MessageBoxW(window_, L"No matching curve is available to export yet.",
@@ -2329,10 +2374,15 @@ void ToneTraceWin32Editor::Impl::exportCurve(int menuId) {
   }
   try {
     if (menuId == kExportIr) {
-      const std::vector<double> kernel =
-          tonetrace::renderProfileKernel(*snapshot);
+      const std::vector<double> kernel = exportManualIr
+                                             ? tonetrace::renderManualCorrectionIr(
+                                                   manualSettings)
+                                             : tonetrace::renderProfileKernel(
+                                                   *snapshot);
       tonetrace::AudioBuffer audio;
-      audio.sampleRate = snapshot->renderSettings.sampleRate;
+      audio.sampleRate = exportManualIr
+                             ? manualSettings.sampleRate
+                             : snapshot->renderSettings.sampleRate;
       audio.channels = {kernel};
       tonetrace::writeFloatWav(path, audio);
       announceMessage(L"Impulse response exported.");

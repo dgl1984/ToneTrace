@@ -5,6 +5,12 @@ versioning, and release dates use `YYYY-MM-DD`.
 
 ## [Unreleased]
 
+### Added
+
+- Impulse-response export now supports a manually created graphic-EQ curve
+  before any match has been learned. Tone Trace presents an OK/Cancel warning
+  first; a completely flat unmatched instance retains the existing error.
+
 ### Fixed
 
 - Band values now use the same unit-bearing dB string in the painted control,

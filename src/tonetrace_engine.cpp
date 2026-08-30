@@ -1237,6 +1237,33 @@ void validateIrRenderSettings(const CorrectionModel& model,
   }
 }
 
+bool hasManualCorrection(const IrRenderSettings& settings) noexcept {
+  if (!std::isfinite(settings.correctionGainDb) ||
+      std::abs(settings.correctionGainDb) > 1.0e-12) {
+    return true;
+  }
+  return std::any_of(settings.manualGains.begin(), settings.manualGains.end(),
+                     [](double gain) {
+                       return !std::isfinite(gain) ||
+                              std::abs(gain) > 1.0e-12;
+                     });
+}
+
+std::vector<double> renderManualCorrectionIr(
+    const IrRenderSettings& settings) {
+  CorrectionModel flatModel;
+  flatModel.mode = MatchMode::FullMix;
+  flatModel.analysisLowHz = 20.0;
+  flatModel.analysisHighHz = 20000.0;
+  flatModel.resolution =
+      std::max(1, static_cast<int>(settings.manualGains.size()));
+  flatModel.nodes = {
+      {20.0, 0.0, 1.0},
+      {20000.0, 0.0, 1.0},
+  };
+  return renderMinimumPhaseIr(flatModel, settings);
+}
+
 std::vector<double> renderMinimumPhaseIr(const CorrectionModel& model,
                                          const IrRenderSettings& settings) {
   validateIrRenderSettings(model, settings);
