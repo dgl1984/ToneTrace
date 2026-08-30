@@ -226,46 +226,71 @@ void addControlTooltip(HWND tooltip, HWND owner, HWND control,
   SendMessageW(tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
 }
 
-using TaskDialogIndirectFn = HRESULT(WINAPI*)(
-    const TASKDIALOGCONFIG*, int*, int*, BOOL*);
+constexpr UINT kAnnounceManualIrWarning = WM_APP + 0x63;
 
-TaskDialogIndirectFn taskDialogIndirectFn() {
-  // Hosts can activate an older common-controls implementation that does not
-  // export TaskDialogIndirect. Resolve it at runtime so that condition falls
-  // back to MessageBox instead of preventing the entire plug-in from loading.
-  static const TaskDialogIndirectFn function = [] {
-    HMODULE module = GetModuleHandleW(L"comctl32.dll");
-    if (module == nullptr) module = LoadLibraryW(L"comctl32.dll");
-    if (module == nullptr) return static_cast<TaskDialogIndirectFn>(nullptr);
-    return reinterpret_cast<TaskDialogIndirectFn>(
-        GetProcAddress(module, "TaskDialogIndirect"));
-  }();
-  return function;
+INT_PTR CALLBACK manualIrWarningProc(HWND dialog, UINT message,
+                                     WPARAM wParam, LPARAM) {
+  switch (message) {
+    case WM_INITDIALOG: {
+      HWND warning = GetDlgItem(dialog, IDC_MANUAL_IR_WARNING_TEXT);
+      SetDlgItemTextW(
+          dialog, IDC_MANUAL_IR_WARNING_TEXT,
+          L"No learned match is available.\r\n\r\n"
+          L"Tone Trace will export an impulse response of the manually "
+          L"created curve that is currently active.\r\n\r\n"
+          L"Do you want to continue?");
+      SendMessageW(dialog, DM_SETDEFID, IDOK, 0);
+      if (warning != nullptr) {
+        SendMessageW(warning, EM_SETSEL, 0, 0);
+        SetFocus(warning);
+        // Repeat the native focus event once the modal dialog is visible. NVDA
+        // can otherwise receive the initialization focus before it has begun
+        // tracking the newly shown dialog and omit the warning text.
+        PostMessageW(dialog, kAnnounceManualIrWarning, 0, 0);
+        return FALSE;
+      }
+      return TRUE;
+    }
+    case kAnnounceManualIrWarning: {
+      HWND warning = GetDlgItem(dialog, IDC_MANUAL_IR_WARNING_TEXT);
+      if (warning != nullptr) {
+        SetFocus(warning);
+        NotifyWinEvent(EVENT_OBJECT_FOCUS, warning, OBJID_CLIENT, CHILDID_SELF);
+      }
+      return TRUE;
+    }
+    case WM_COMMAND:
+      if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL) {
+        EndDialog(dialog, LOWORD(wParam));
+        return TRUE;
+      }
+      break;
+    case WM_CLOSE:
+      EndDialog(dialog, IDCANCEL);
+      return TRUE;
+    default:
+      break;
+  }
+  return FALSE;
+}
+
+HINSTANCE manualIrWarningModule() {
+  HINSTANCE instance = nullptr;
+  GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                         GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                     reinterpret_cast<LPCWSTR>(&manualIrWarningProc), &instance);
+  return instance;
 }
 
 int confirmManualIrExport(HWND owner) {
-  TASKDIALOGCONFIG config{};
-  config.cbSize = sizeof(config);
-  config.hwndParent = owner;
-  config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
-  config.dwCommonButtons = TDCBF_OK_BUTTON | TDCBF_CANCEL_BUTTON;
-  config.pszWindowTitle = L"Export Manual Curve";
-  config.pszMainInstruction = L"Export the manually created curve?";
-  config.pszContent =
-      L"No learned match is available. Tone Trace will export an impulse "
-      L"response of the manually created curve that is currently active.";
-  config.pszMainIcon = TD_WARNING_ICON;
-  config.nDefaultButton = IDOK;
-
-  int button = IDCANCEL;
-  TaskDialogIndirectFn taskDialog = taskDialogIndirectFn();
-  if (taskDialog != nullptr &&
-      SUCCEEDED(taskDialog(&config, &button, nullptr, nullptr))) {
-    return button;
+  const INT_PTR answer = DialogBoxParamW(
+      manualIrWarningModule(), MAKEINTRESOURCEW(IDD_MANUAL_IR_WARNING), owner,
+      manualIrWarningProc, 0);
+  if (answer == IDOK || answer == IDCANCEL) {
+    return static_cast<int>(answer);
   }
 
-  // TaskDialog is available on supported Windows versions, but retain a
-  // standard accessible fallback for an unusual host/common-controls setup.
+  // Retain a standard fallback if the plug-in resource cannot be created.
   return MessageBoxW(
       owner,
       L"No learned match is available. Tone Trace will export an impulse "

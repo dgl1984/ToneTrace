@@ -12,3 +12,19 @@ EXSTYLE WS_EX_CONTROLPARENT
 CAPTION "Tone Trace EQ"
 BEGIN
 END
+
+// The warning text is a focused read-only edit so screen readers announce the
+// complete decision before the user reaches either action button. Enter still
+// invokes the default OK button and Escape invokes Cancel.
+IDD_MANUAL_IR_WARNING DIALOGEX 0, 0, 360, 126
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_DLGMODALFRAME
+CAPTION "Export Manual Curve"
+FONT 9, "Segoe UI"
+BEGIN
+    EDITTEXT IDC_MANUAL_IR_WARNING_TEXT, 12, 12, 336, 72,
+             ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_TABSTOP,
+             WS_EX_CLIENTEDGE
+    DEFPUSHBUTTON "OK", IDOK, 208, 96, 66, 20
+    PUSHBUTTON "Cancel", IDCANCEL, 282, 96, 66, 20
+END

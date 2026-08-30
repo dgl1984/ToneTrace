@@ -20,6 +20,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -36,7 +37,9 @@ constexpr int kImportId = 107;
 constexpr int kModeComboId = 200;
 constexpr int kEditFirstId = 300;
 constexpr int kEmergencyGuardEditId = kEditFirstId + 3;
+constexpr int kExportIrMenuId = 600;
 constexpr int kBandSliderFirstId = 2000;
+constexpr int kManualIrWarningTextId = 4000;
 
 void require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
@@ -502,6 +505,77 @@ void verifyBandAccessibility(HWND fader) {
   automation->Release();
 }
 
+struct ManualWarningObservation {
+  bool found = false;
+  bool warningFocused = false;
+  bool warningReadOnly = false;
+  bool okIsDefault = false;
+  std::wstring text;
+};
+
+void verifyManualExportWarning(HWND editor) {
+  ManualWarningObservation observation;
+  const DWORD guiThread = GetWindowThreadProcessId(editor, nullptr);
+  std::thread inspector([&] {
+    HWND dialog = nullptr;
+    for (int attempt = 0; attempt < 300 && dialog == nullptr; ++attempt) {
+      EnumThreadWindows(
+          guiThread,
+          [](HWND candidate, LPARAM context) -> BOOL {
+            wchar_t title[128]{};
+            GetWindowTextW(candidate, title, static_cast<int>(std::size(title)));
+            if (std::wcscmp(title, L"Export Manual Curve") == 0) {
+              *reinterpret_cast<HWND*>(context) = candidate;
+              return FALSE;
+            }
+            return TRUE;
+          },
+          reinterpret_cast<LPARAM>(&dialog));
+      if (dialog == nullptr) Sleep(10);
+    }
+    if (dialog == nullptr) return;
+
+    observation.found = true;
+    HWND warning = GetDlgItem(dialog, kManualIrWarningTextId);
+    if (warning != nullptr) {
+      observation.text = textOf(warning);
+      const LONG_PTR style = GetWindowLongPtrW(warning, GWL_STYLE);
+      observation.warningReadOnly = (style & ES_READONLY) != 0;
+
+      for (int attempt = 0; attempt < 100; ++attempt) {
+        GUITHREADINFO info{};
+        info.cbSize = sizeof(info);
+        if (GetGUIThreadInfo(guiThread, &info) && info.hwndFocus == warning) {
+          observation.warningFocused = true;
+          break;
+        }
+        Sleep(10);
+      }
+    }
+
+    const LRESULT defaultId = SendMessageW(dialog, DM_GETDEFID, 0, 0);
+    observation.okIsDefault = HIWORD(defaultId) == DC_HASDEFID &&
+                              LOWORD(defaultId) == IDOK;
+    PostMessageW(dialog, WM_COMMAND, MAKEWPARAM(IDCANCEL, BN_CLICKED), 0);
+  });
+
+  SendMessageW(editor, WM_COMMAND, MAKEWPARAM(kExportIrMenuId, 0), 0);
+  inspector.join();
+
+  require(observation.found, "manual IR warning dialog did not open");
+  require(observation.warningFocused,
+          "manual IR warning text did not receive accessibility focus");
+  require(observation.warningReadOnly,
+          "manual IR warning text is not a read-only native edit");
+  require(observation.okIsDefault,
+          "manual IR warning does not keep OK as the default action");
+  require(observation.text.find(L"No learned match is available") !=
+              std::wstring::npos &&
+              observation.text.find(L"manually created curve") !=
+                  std::wstring::npos,
+          "focused warning control does not contain the complete decision");
+}
+
 void verifyManualBandBeforeProfile(HWND editor) {
   selectPage(editor, 1);
   HWND first = GetDlgItem(editor, kBandSliderFirstId);
@@ -530,6 +604,8 @@ void verifyManualBandBeforeProfile(HWND editor) {
           "pre-profile accessible band value did not follow the edit");
   SysFreeString(value);
   accessible->Release();
+
+  verifyManualExportWarning(editor);
 
   SendMessageW(first, WM_KEYDOWN, '0', 0);
   require(neutralText(textOf(first)),
