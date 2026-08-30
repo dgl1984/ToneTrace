@@ -68,11 +68,15 @@ For unusually severe restoration work, the normal **Maximum Correction** limit c
 
 Once Tone Trace has learned the correction, Preview and Frozen operation report **zero samples of plug-in latency** and use no lookahead. That makes a learned match practical in monitoring, broadcast, voice, and other real-time paths instead of limiting it to offline analysis.
 
-The same learned correction can also be exported as a minimum-phase impulse response at common production sample rates. This lets the tonal match move outside Tone Trace when a convolution host is a better fit for the job.
+A learned correction can be exported as a minimum-phase impulse response at common production sample rates. You can also export a curve created by hand with the band controls or Correction Gain before learning a match. Tone Trace asks for confirmation when exporting a manually created curve. A completely flat unmatched instance still has nothing to export.
 
 ## Accessibility
 
 The Windows editor was designed to be usable both visually and nonvisually. The Match page is mouse-operable, the graphic-EQ bands have conventional visual faders, and the same controls remain keyboard accessible without adding extra focus stops or verbose screen-reader chatter.
+
+Band values report the same dB value everywhere: in the visible control,
+exact-value field, NVDA, and Narrator. Values retain up to three meaningful
+decimal places, and Narrator does not substitute percentages.
 
 With NVDA, band navigation is intentionally concise. The read-only curve text
 is explicitly labeled **Curve Description**, and global controls and workflow

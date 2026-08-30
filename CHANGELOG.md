@@ -9,24 +9,25 @@ versioning, and release dates use `YYYY-MM-DD`.
 
 ### Added
 
-- Impulse-response export now supports a manually created graphic-EQ curve
-  before any match has been learned. Tone Trace presents an OK/Cancel warning
-  first; a completely flat unmatched instance retains the existing error.
+- Impulse-response export now supports curves created manually with the band
+  controls or Correction Gain before a match has been learned. Tone Trace asks
+  for confirmation before exporting a manual curve. A learned match exports
+  without the warning, while a completely flat unmatched instance retains the
+  existing error.
 
 ### Fixed
 
-- Band values now use the same unit-bearing dB string in the painted control,
-  exact editor, readout, NVDA/MSAA path, and Narrator/UI Automation path, with
-  up to three meaningful decimal places instead of losing detail after 0.1 dB.
-- UI Automation no longer exposes band faders as percentage-producing sliders;
-  Narrator receives the actual editable dB string through the Value pattern.
+- Band values now report the same dB value in the painted control, exact-value
+  editor, readout, NVDA, and Narrator, retaining up to three meaningful decimal
+  places instead of losing detail after 0.1 dB.
+- Narrator no longer reports band values as percentages and now announces the
+  updated dB value after Up or Down.
 - One- and six-dB keyboard adjustments preserve the existing fractional value.
 - Changing Correction Resolution while the editor is open now redraws the tab
-  strip and refreshes cached screen-reader labels when pages are added or removed.
+  strip and refreshes cached screen-reader labels when pages are added or
+  removed.
 - Emergency Clip Guard now appears immediately after Correction Gain, with its
   visible label aligned to the correct value field and keyboard position.
-- Narrator now receives the complete dB string as a focused UIA notification
-  when a band changes, including Up/Down adjustments.
 
 ## [1.0.2] - 2026-08-29
 

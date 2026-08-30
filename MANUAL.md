@@ -421,7 +421,7 @@ The exported IR is mono 32-bit floating point and contains the linear EQ correct
 
 The IR reflects the correction that is active when you export it, including the currently selected Match Mode and rendering choices such as Correction Strength, Q / Sharpness, Correction Gain, Correction Range, and manual band trims. If you change those settings afterward, export a new IR to capture the new version of the correction.
 
-You can also export an IR before learning a match when you have created a curve with the band controls or Correction Gain. Tone Trace presents an accessible standard Windows warning that the IR contains a manually created curve and offers **OK** or **Cancel**, with **OK** as the focused default action. If no match exists and neither the bands nor Correction Gain has changed the flat response, export retains the **No matching curve is available to export yet** error. Strength, Sharpness, and other match-only controls do not make an otherwise flat unmatched instance exportable.
+You can also export an IR before learning a match when you have created a curve with the band controls or Correction Gain. Tone Trace presents an accessible standard Windows warning that the IR contains a manually created curve and offers **OK** or **Cancel**, with **OK** as the focused default action. Once a learned match exists, export proceeds normally without this warning. If no match exists and neither the bands nor Correction Gain has changed the flat response, export retains the **No matching curve is available to export yet** error. Strength, Sharpness, and other match-only controls do not make an otherwise flat unmatched instance exportable.
 
 ### Import Reference
 

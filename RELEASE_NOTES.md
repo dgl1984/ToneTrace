@@ -1,24 +1,27 @@
 # Tone Trace EQ 1.0.3 release notes
 
-Tone Trace EQ 1.0.3 makes band values consistent across the visible editor,
-exact-value entry, NVDA, and Narrator, and adds impulse-response export for
-curves created manually without a learned match.
+Tone Trace EQ 1.0.3 makes the band controls more consistent and adds
+impulse-response export for curves you create by hand. The same dB value is now
+reported everywhere, whether you are reading the editor, entering an exact
+value, using NVDA, or using Narrator.
 
 ## What's new
 
-- Every band value now uses the same unit-bearing dB text everywhere it is
-  displayed, edited, or spoken, preserving up to three meaningful decimal
-  places.
+- Band values now report the same dB value everywhere: in the visible control,
+  exact-value field, NVDA, and Narrator. Values retain up to three meaningful
+  decimal places.
 - One- and six-dB keyboard adjustments preserve an existing fractional value.
-- Narrator now receives actual dB values instead of percentages and announces
-  the updated value after Up or Down; NVDA retains its direct dB value path.
+- Narrator no longer substitutes percentages and now announces changes made
+  with Up or Down.
 - Band-page tab labels refresh immediately when Correction Resolution adds or
   removes pages.
 - **Emergency Clip Guard** now appears immediately after **Correction Gain** in
   the visible layout and keyboard order.
-- A manually created curve can be exported as an impulse response before any
-  match has been learned. Tone Trace asks for confirmation first; a completely
-  flat unmatched instance retains the existing no-match error.
+- You can now export an impulse response from a curve created with the band
+  controls or Correction Gain, even if Tone Trace has not learned a match. Tone
+  Trace asks for confirmation before exporting a manually created curve.
+  Learned matches export normally without this warning, while a completely
+  flat unmatched instance still reports that no curve is available.
 
 ## Download
 
