@@ -3,6 +3,19 @@
 All notable Tone Trace EQ changes are recorded here. Versions follow semantic
 versioning, and release dates use `YYYY-MM-DD`.
 
+## [Unreleased]
+
+### Fixed
+
+- Band values now use the same unit-bearing dB string in the painted control,
+  exact editor, readout, NVDA/MSAA path, and Narrator/UI Automation path, with
+  up to three meaningful decimal places instead of losing detail after 0.1 dB.
+- UI Automation no longer exposes band faders as percentage-producing sliders;
+  Narrator receives the actual editable dB string through the Value pattern.
+- One- and six-dB keyboard adjustments preserve the existing fractional value.
+- Changing Correction Resolution while the editor is open now redraws the tab
+  strip and refreshes cached screen-reader labels when pages are added or removed.
+
 ## [1.0.2] - 2026-08-29
 
 ### Added

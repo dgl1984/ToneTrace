@@ -78,13 +78,21 @@ Rules from the OptiLab study applied here:
   non-multiple is rebalanced so there is no nearly empty final tab. The native
   tab control uses natural caption widths so its own scroll arrows never cover
   a visible tab label.
-- Each band remains a native readonly EDIT with the same concise accessible
-  text and the same single tab stop. Its custom paint presents that control as a
-  vertical graphic-EQ fader with a visible 0 dB center mark, movable thumb,
-  frequency label above, and exact dB readout below. Mouse click/drag edits the
-  same underlying band; double-click centers it. The visual affordance therefore
-  improves pointer use without creating a second accessibility surface or adding
-  screen-reader verbosity.
+- Each band is one dedicated `ToneTraceAccessibleFader` HWND with the same
+  concise accessible name and a single tab stop. MSAA exposes the canonical dB
+  value used by NVDA; UI Automation exposes that same unit-bearing string through
+  the Value pattern rather than RangeValue, preventing Narrator from substituting
+  a percentage. Its custom paint presents the HWND as a vertical graphic-EQ
+  fader with a visible 0 dB center mark, movable thumb, frequency label above,
+  and exact dB readout below. Mouse click/drag edits the same underlying band;
+  double-click centers it.
+- Band values share one public formatter with up to three meaningful decimal
+  places across painting, exact entry, MSAA, UI Automation, and readouts. The
+  1 dB and 6 dB edit routes add to the fractional value instead of rounding it
+  to an integer first.
+- Rebuilding pages after a live Correction Resolution change redraws the native
+  tab strip and emits standard reorder/name-change events so visible captions
+  and cached screen-reader tab labels stay synchronized.
 - The mouse wheel adjusts a hovered/focused band in the same 1 dB steps as the
   arrow keys. Hover, focus, positive movement, and negative movement use
   distinct visual states.

@@ -369,7 +369,9 @@ Moving the pointer across the graph places a dotted cursor line, and a small lab
 | **0** (or **N**) | Center the selected band at 0 dB |
 | **T** or **F2** | Toggle Trace Curve mode |
 
-Each band is drawn visually as a vertical graphic-EQ fader, with its frequency above it, a clear 0 dB center mark, and the exact final dB value below the fader. Sighted users can click or drag a fader, use the mouse wheel for 1 dB steps (hold **Shift** while scrolling for 6 dB steps, matching Page Up / Page Down), or double-click to center that band at 0 dB. Hover, focus, positive gain, and negative gain have distinct visual feedback. The same control remains a native readonly edit for accessibility, so NVDA keeps the concise band/frequency/value announcement and the existing tab order rather than gaining extra slider controls or verbosity.
+Each band is drawn visually as a vertical graphic-EQ fader, with its frequency above it, a clear 0 dB center mark, and the exact final dB value below the fader. Sighted users can click or drag a fader, use the mouse wheel for 1 dB steps (hold **Shift** while scrolling for 6 dB steps, matching Page Up / Page Down), or double-click to center that band at 0 dB. Hover, focus, positive gain, and negative gain have distinct visual feedback. The same HWND exposes its band/frequency name and a unit-bearing editable dB value through standard Windows accessibility APIs. NVDA and Narrator should therefore announce the same dB number rather than converting the fader range to a percentage.
+
+Band values use one public format everywhere: the painted readout, exact-value editor, MSAA value, UI Automation value, and spoken result retain up to three meaningful decimal places. Unnecessary trailing zeroes beyond the first decimal are omitted. For example, `-6.2 dB` stays `-6.2 dB`, while `-6.234 dB` remains available as `-6.234 dB`. A 1 dB adjustment preserves the fractional base, so `-6.234 dB` becomes `-5.234 dB`.
 
 The band pages also work before you capture anything. In that state they are a
 standalone 30-band graphic EQ on the normal 20 Hz–20 kHz grid; manual changes
@@ -378,7 +380,7 @@ a match exists, those controls become trims around the learned correction.
 
 The displayed value is the **final tonal correction** at that band after Maximum Correction, Q / Sharpness, Correction Strength, and any manual trim. **Correction Gain** remains a separate global level trim and is not folded into every band value.
 
-Band pages use a preferred maximum of 10 bands each and are balanced when necessary to prevent a nearly empty last tab. The default 30-band resolution is therefore three pages: **1–10**, **11–20**, and **21–30**. A 60-band trace uses six predictable 10-band pages, while totals such as 31 are redistributed rather than leaving a one-band final page.
+Band pages use a preferred maximum of 10 bands each and are balanced when necessary to prevent a nearly empty last tab. The default 30-band resolution is therefore three pages: **1–10**, **11–20**, and **21–30**. A 60-band trace uses six predictable 10-band pages, while totals such as 31 are redistributed rather than leaving a one-band final page. Changing Correction Resolution while the editor is open rebuilds both the pages and their visible and accessible tab labels.
 
 ### Trace Curve mode
 

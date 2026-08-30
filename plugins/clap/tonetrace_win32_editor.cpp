@@ -7,6 +7,7 @@
 #endif
 #include "tonetrace_win32_editor.h"
 #include "tonetrace_accessible_fader.h"
+#include "tonetrace_band_value.h"
 #include "resource.h"
 
 #include <clap/clap.h>
@@ -524,7 +525,6 @@ class ToneTraceWin32Editor::Impl {
   void stackCurrentPage();
   void onTabChanged();
   void onTabFocus();
-  void adjustBand(int band, int position);
   void setBandValueDb(int band, double valueDb);
   void playBandTone(int band) const;
   void onBandFocus(int band);
@@ -1659,6 +1659,18 @@ void ToneTraceWin32Editor::Impl::insertTraceTabs() {
   // and still scroll normally at very high resolutions.
   SendMessageW(tabControl_, TCM_SETPADDING, 0,
                MAKELPARAM(px(12), px(4)));
+  // Programmatic replacement updates the native items but does not reliably
+  // invalidate accessibility-client caches. Refresh both the pixels and the
+  // standard MSAA child structure after a Resolution change.
+  RedrawWindow(tabControl_, nullptr, nullptr,
+               RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
+  NotifyWinEvent(EVENT_OBJECT_REORDER, tabControl_, OBJID_CLIENT, CHILDID_SELF);
+  const int itemCount =
+      static_cast<int>(SendMessageW(tabControl_, TCM_GETITEMCOUNT, 0, 0));
+  for (int index = 0; index < itemCount; ++index) {
+    NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, tabControl_, OBJID_CLIENT,
+                   index + 1);
+  }
 }
 
 void ToneTraceWin32Editor::Impl::layoutChildren() {
@@ -2451,15 +2463,20 @@ void ToneTraceWin32Editor::Impl::updateReadout() {
     }
     wchar_t buffer[192]{};
     if (snapshot != nullptr) {
+      const std::wstring finalText = tonetrace::formatBandValueDbWide(final);
+      const std::wstring matchText = tonetrace::formatBandValueDbWide(match);
+      const std::wstring trimText = tonetrace::formatBandValueDbWide(trim);
       std::swprintf(buffer, std::size(buffer),
-                    L"Band %d of %d, %d Hz, Final %+.1f dB (match %+.1f, trim %+.1f)",
+                    L"Band %d of %d, %d Hz, Final %ls (match %ls, trim %ls)",
                     traceIndex_ + 1, count,
-                    static_cast<int>(std::lround(frequency)), final, match, trim);
+                    static_cast<int>(std::lround(frequency)), finalText.c_str(),
+                    matchText.c_str(), trimText.c_str());
     } else {
+      const std::wstring finalText = tonetrace::formatBandValueDbWide(final);
       std::swprintf(buffer, std::size(buffer),
-                    L"Band %d of %d, %d Hz, %+.1f dB; manual graphic EQ, no learned correction",
+                    L"Band %d of %d, %d Hz, %ls; manual graphic EQ, no learned correction",
                     traceIndex_ + 1, count,
-                    static_cast<int>(std::lround(frequency)), final);
+                    static_cast<int>(std::lround(frequency)), finalText.c_str());
     }
     SetWindowTextW(readoutEdit_, buffer);
     return;
@@ -2495,9 +2512,15 @@ void ToneTraceWin32Editor::Impl::updateReadout() {
   const double correction = finalCorrectionDb(frequency);
 
   wchar_t buffer[256]{};
+  const std::wstring referenceText =
+      tonetrace::formatBandValueDbWide(reference);
+  const std::wstring targetText = tonetrace::formatBandValueDbWide(target);
+  const std::wstring correctionText =
+      tonetrace::formatBandValueDbWide(correction);
   std::swprintf(buffer, std::size(buffer),
-                L"%d Hz  |  Reference %.1f dB  |  Target %.1f dB  |  Correction %+.1f dB",
-                static_cast<int>(frequency), reference, target, correction);
+                L"%d Hz  |  Reference %ls  |  Target %ls  |  Correction %ls",
+                static_cast<int>(frequency), referenceText.c_str(),
+                targetText.c_str(), correctionText.c_str());
   SetWindowTextW(readoutEdit_, buffer);
 }
 
@@ -2661,11 +2684,9 @@ double ToneTraceWin32Editor::Impl::bandValueDb(int band) const {
 }
 
 std::wstring ToneTraceWin32Editor::Impl::bandValueText(int band) const {
-  wchar_t buffer[96]{};
-  std::swprintf(buffer, std::size(buffer),
-                L"Band %d, %s: %+.1f dB", band + 1,
-                bandFrequencyText(band).c_str(), bandValueDb(band));
-  return buffer;
+  return L"Band " + std::to_wstring(band + 1) + L", " +
+         bandFrequencyText(band) + L": " +
+         tonetrace::formatBandValueDbWide(bandValueDb(band));
 }
 
 void ToneTraceWin32Editor::Impl::playBandTone(int band) const {
@@ -2796,15 +2817,14 @@ double ToneTraceWin32Editor::Impl::bandRangeDb(bool maximum) const {
 
 void ToneTraceWin32Editor::Impl::adjustBandStep(int band, int step) {
   if (band < 0 || band >= traceBandCount()) return;
-  const int position = static_cast<int>(std::lround(bandValueDb(band)));
-  const int lo = static_cast<int>(bandRangeDb(false));
-  const int hi = static_cast<int>(bandRangeDb(true));
-  adjustBand(band, std::clamp(position + step, lo, hi));
+  setBandValueDb(band,
+                 std::clamp(bandValueDb(band) + static_cast<double>(step),
+                            bandRangeDb(false), bandRangeDb(true)));
 }
 
 void ToneTraceWin32Editor::Impl::bandToExtreme(int band, bool maximum) {
   if (band < 0 || band >= traceBandCount()) return;
-  adjustBand(band, static_cast<int>(bandRangeDb(maximum)));
+  setBandValueDb(band, bandRangeDb(maximum));
 }
 
 void ToneTraceWin32Editor::Impl::destroyTracePages() {
@@ -2852,10 +2872,10 @@ void ToneTraceWin32Editor::Impl::rebuildTraceTabs() {
     page.highHz = traceBandFrequency(page.firstBand + page.bandCount - 1);
     for (int offset = 0; offset < page.bandCount; ++offset) {
       const int band = page.firstBand + offset;
-      // A read-only edit whose text IS the band's dB value. Unlike a trackbar
-      // (which NVDA reports as a percentage of its -120..120 range), the edit
-      // announces the final level (e.g. "Band 3, 500 Hz: +12.0 dB") on focus,
-      // and the subclass makes it act like a slider: Up/Down step 1 dB,
+      // One custom fader HWND provides both pointer editing and a unit-bearing
+      // accessible value (e.g. "Band 3, 500 Hz: +12.0 dB"). It uses MSAA's
+      // established dB value path and UIA's string Value pattern so neither
+      // screen reader has to infer a percentage. Up/Down step 1 dB,
       // PageUp/PageDown step 6, Home/End go to the curve's extremes, 0 (or N) sets
       // the band to 0 dB.
       tonetrace::win32::AccessibleFaderCallbacks callbacks{};
@@ -2999,10 +3019,6 @@ void ToneTraceWin32Editor::Impl::onTabChanged() {
 }
 
 void ToneTraceWin32Editor::Impl::onTabFocus() {}
-
-void ToneTraceWin32Editor::Impl::adjustBand(int band, int position) {
-  setBandValueDb(band, static_cast<double>(position));
-}
 
 void ToneTraceWin32Editor::Impl::setBandValueDb(int band, double valueDb) {
   if (setBandGain_ == nullptr || !std::isfinite(valueDb)) return;

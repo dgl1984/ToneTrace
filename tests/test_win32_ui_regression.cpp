@@ -203,6 +203,74 @@ struct HostInputEvents {
   }
 };
 
+void setParameter(const clap_plugin_t* plugin, clap_id id, double value) {
+  const auto* params = static_cast<const clap_plugin_params_t*>(
+      plugin->get_extension(plugin, CLAP_EXT_PARAMS));
+  require(params != nullptr && params->flush != nullptr,
+          "CLAP parameter flush is unavailable");
+  HostInputEvents input;
+  input.add(id, value);
+  params->flush(plugin, &input.iface, nullptr);
+  plugin->on_main_thread(plugin);
+}
+
+std::wstring tabItemText(HWND tabs, int index) {
+  wchar_t buffer[128]{};
+  TCITEMW item{};
+  item.mask = TCIF_TEXT;
+  item.pszText = buffer;
+  item.cchTextMax = static_cast<int>(std::size(buffer));
+  require(SendMessageW(tabs, TCM_GETITEMW, static_cast<WPARAM>(index),
+                       reinterpret_cast<LPARAM>(&item)) != FALSE,
+          "could not read tab label");
+  return buffer;
+}
+
+void verifyResolutionTabRefresh(const clap_plugin_t* plugin, HWND editor) {
+  HWND tabs = GetDlgItem(editor, kTabControlId);
+  require(tabs != nullptr, "tab control missing for resolution refresh test");
+  const int originalCount =
+      static_cast<int>(SendMessageW(tabs, TCM_GETITEMCOUNT, 0, 0));
+
+  setParameter(plugin, 130, 61.0);  // Correction Resolution
+  SendMessageW(editor, WM_TIMER, 1, 0);
+  pumpMessages();
+
+  const int expandedCount =
+      static_cast<int>(SendMessageW(tabs, TCM_GETITEMCOUNT, 0, 0));
+  require(expandedCount > originalCount,
+          "increasing Resolution did not add band-page tabs");
+  const std::wstring lastExpanded = tabItemText(tabs, expandedCount - 1);
+  require(lastExpanded.find(L"61") != std::wstring::npos,
+          "expanded tab label retained the previous band range");
+
+  IAccessible* accessible = nullptr;
+  require(SUCCEEDED(AccessibleObjectFromWindow(
+              tabs, static_cast<DWORD>(OBJID_CLIENT), IID_IAccessible,
+              reinterpret_cast<void**>(&accessible))) &&
+              accessible != nullptr,
+          "tab control has no MSAA object after resolution change");
+  VARIANT child{};
+  child.vt = VT_I4;
+  child.lVal = expandedCount;
+  BSTR accessibleName = nullptr;
+  require(SUCCEEDED(accessible->get_accName(child, &accessibleName)) &&
+              accessibleName != nullptr &&
+              std::wstring(accessibleName) == lastExpanded,
+          "accessible tab label did not refresh with the visible label");
+  SysFreeString(accessibleName);
+  accessible->Release();
+
+  setParameter(plugin, 130, 30.0);
+  SendMessageW(editor, WM_TIMER, 1, 0);
+  pumpMessages();
+  require(SendMessageW(tabs, TCM_GETITEMCOUNT, 0, 0) == originalCount,
+          "restoring Resolution did not restore the original tab count");
+  require(tabItemText(tabs, originalCount - 1).find(L"30") !=
+              std::wstring::npos,
+          "restored tab label did not return to the original band range");
+}
+
 void feedSeconds(const clap_plugin_t* plugin, double seconds,
                  int command, double seed) {
   const uint32_t frames = 256;
@@ -383,30 +451,33 @@ void verifyBandAccessibility(HWND fader) {
 
   CONTROLTYPEID controlType = 0;
   require(SUCCEEDED(element->get_CurrentControlType(&controlType)) &&
-              controlType == UIA_SliderControlTypeId,
-          "UI Automation band control type is not Slider");
+              controlType == UIA_EditControlTypeId,
+          "UI Automation band control type is not Edit");
 
   IUnknown* unknownPattern = nullptr;
-  require(SUCCEEDED(element->GetCurrentPattern(UIA_RangeValuePatternId,
+  require(SUCCEEDED(element->GetCurrentPattern(UIA_ValuePatternId,
                                                &unknownPattern)) &&
               unknownPattern != nullptr,
-          "UI Automation band does not expose RangeValue");
-  IUIAutomationRangeValuePattern* range = nullptr;
+          "UI Automation band does not expose a unit-bearing Value");
+  IUIAutomationValuePattern* valuePattern = nullptr;
   require(SUCCEEDED(unknownPattern->QueryInterface(
-              __uuidof(IUIAutomationRangeValuePattern),
-              reinterpret_cast<void**>(&range))) && range != nullptr,
-          "UI Automation RangeValue pattern could not be queried");
-  double current = 0.0;
-  double smallChange = 0.0;
-  double largeChange = 0.0;
-  require(SUCCEEDED(range->get_CurrentValue(&current)) &&
-              SUCCEEDED(range->get_CurrentSmallChange(&smallChange)) &&
-              SUCCEEDED(range->get_CurrentLargeChange(&largeChange)) &&
-              std::abs(smallChange - 1.0) < 1.0e-9 &&
-              std::abs(largeChange - 6.0) < 1.0e-9,
-          "UI Automation RangeValue step metadata is wrong");
-  range->Release();
+              __uuidof(IUIAutomationValuePattern),
+              reinterpret_cast<void**>(&valuePattern))) &&
+              valuePattern != nullptr,
+          "UI Automation Value pattern could not be queried");
+  BSTR current = nullptr;
+  require(SUCCEEDED(valuePattern->get_CurrentValue(&current)) &&
+              current != nullptr &&
+              std::wstring(current).find(L"dB") != std::wstring::npos,
+          "UI Automation Value does not carry the dB unit");
+  SysFreeString(current);
+  valuePattern->Release();
   unknownPattern->Release();
+
+  unknownPattern = nullptr;
+  element->GetCurrentPattern(UIA_RangeValuePatternId, &unknownPattern);
+  require(unknownPattern == nullptr,
+          "UI Automation still exposes RangeValue and permits percentage speech");
   element->Release();
   automation->Release();
 }
@@ -545,13 +616,24 @@ void verifyBandMouseAndKeyboard(HWND editor) {
   require(exactEdit != nullptr && exactEdit != first &&
               _wcsicmp(exactClass, L"Edit") == 0,
           "Enter did not open the native exact-value edit");
-  SetWindowTextW(exactEdit, L"-3.5");
+  SetWindowTextW(exactEdit, L"-6.234");
   SendMessageW(exactEdit, WM_KEYDOWN, VK_RETURN, 0);
   pumpMessages();
   require(GetFocus() == first,
           "exact-value Enter did not return focus to the same band");
-  require(std::abs(parseBandDb(textOf(first)) + 3.5) < 0.05,
-          "exact-value editor did not commit a decimal dB value");
+  require(std::abs(parseBandDb(textOf(first)) + 6.234) < 1.0e-9,
+          "exact-value editor hid precision beyond one decimal place");
+
+  SendMessageW(first, WM_KEYDOWN, VK_RETURN, 0);
+  pumpMessages();
+  exactEdit = GetFocus();
+  require(textOf(exactEdit) == L"-6.234",
+          "exact-value editor did not reopen with the public dB precision");
+  SendMessageW(exactEdit, WM_KEYDOWN, VK_ESCAPE, 0);
+  pumpMessages();
+  SendMessageW(first, WM_KEYDOWN, VK_UP, 0);
+  require(std::abs(parseBandDb(textOf(first)) + 5.234) < 1.0e-9,
+          "1 dB keyboard step discarded the fractional base");
 
   // Mouse use must leave the same control usable from the keyboard.
   before = textOf(first);
@@ -801,6 +883,7 @@ void run(const char* path) {
     require(editor != nullptr, "could not locate editor HWND");
 
     verifyKnownGoodKeyboardBaseline(editor);
+    verifyResolutionTabRefresh(instance.plugin, editor);
     verifyManualBandBeforeProfile(editor);
     commitCorrectionProfile(instance.plugin);
     verifyBandMouseAndKeyboard(editor);

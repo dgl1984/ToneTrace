@@ -7,7 +7,7 @@ ENGINE_OBJS := $(BUILD)/tonetrace_engine.o $(BUILD)/tonetrace_realtime.o $(BUILD
 
 .PHONY: all test clean
 
-all: $(BUILD)/tonetrace-match $(BUILD)/tonetrace-tests $(BUILD)/tonetrace-realtime-tests $(BUILD)/tonetrace-ui-layout-tests $(BUILD)/tonetrace-fixture-eval $(BUILD)/tonetrace-pair-eval $(BUILD)/tonetrace-stability-eval $(BUILD)/tonetrace-realtime-bench $(BUILD)/ToneTrace_EQ.clap $(BUILD)/tonetrace-clap-tests
+all: $(BUILD)/tonetrace-match $(BUILD)/tonetrace-tests $(BUILD)/tonetrace-realtime-tests $(BUILD)/tonetrace-ui-layout-tests $(BUILD)/tonetrace-band-value-tests $(BUILD)/tonetrace-fixture-eval $(BUILD)/tonetrace-pair-eval $(BUILD)/tonetrace-stability-eval $(BUILD)/tonetrace-realtime-bench $(BUILD)/ToneTrace_EQ.clap $(BUILD)/tonetrace-clap-tests
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -33,6 +33,9 @@ $(BUILD)/tonetrace-realtime-tests: tests/test_realtime.cpp $(ENGINE_OBJS) | $(BU
 $(BUILD)/tonetrace-ui-layout-tests: tests/test_ui_layout.cpp include/tonetrace/tonetrace_ui_layout.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) $< $(LDFLAGS) -o $@
 
+$(BUILD)/tonetrace-band-value-tests: tests/test_band_value.cpp plugins/clap/tonetrace_band_value.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) -Iplugins/clap $< $(LDFLAGS) -o $@
+
 $(BUILD)/tonetrace-fixture-eval: tools/fixture_eval.cpp $(ENGINE_OBJS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
 
@@ -51,11 +54,12 @@ $(BUILD)/ToneTrace_EQ.clap: plugins/clap/tonetrace_clap.cpp src/tonetrace_engine
 $(BUILD)/tonetrace-clap-tests: tests/test_clap.cpp $(ENGINE_OBJS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -Ithird_party/clap/include $^ $(LDFLAGS) -ldl -o $@
 
-test: $(BUILD)/tonetrace-tests $(BUILD)/tonetrace-realtime-tests $(BUILD)/tonetrace-ui-layout-tests $(BUILD)/ToneTrace_EQ.clap $(BUILD)/tonetrace-clap-tests
+test: $(BUILD)/tonetrace-tests $(BUILD)/tonetrace-realtime-tests $(BUILD)/tonetrace-ui-layout-tests $(BUILD)/tonetrace-band-value-tests $(BUILD)/ToneTrace_EQ.clap $(BUILD)/tonetrace-clap-tests
 	$(BUILD)/tonetrace-tests
 	$(BUILD)/tonetrace-realtime-tests
 	$(BUILD)/tonetrace-ui-layout-tests
+	$(BUILD)/tonetrace-band-value-tests
 	$(BUILD)/tonetrace-clap-tests $(BUILD)/ToneTrace_EQ.clap
 
 clean:
-	rm -f $(ENGINE_OBJS) $(BUILD)/tonetrace-match $(BUILD)/tonetrace-tests $(BUILD)/tonetrace-realtime-tests $(BUILD)/tonetrace-ui-layout-tests $(BUILD)/tonetrace-fixture-eval $(BUILD)/tonetrace-pair-eval $(BUILD)/tonetrace-stability-eval $(BUILD)/tonetrace-realtime-bench $(BUILD)/ToneTrace_EQ.clap $(BUILD)/tonetrace-clap-tests
+	rm -f $(ENGINE_OBJS) $(BUILD)/tonetrace-match $(BUILD)/tonetrace-tests $(BUILD)/tonetrace-realtime-tests $(BUILD)/tonetrace-ui-layout-tests $(BUILD)/tonetrace-band-value-tests $(BUILD)/tonetrace-fixture-eval $(BUILD)/tonetrace-pair-eval $(BUILD)/tonetrace-stability-eval $(BUILD)/tonetrace-realtime-bench $(BUILD)/ToneTrace_EQ.clap $(BUILD)/tonetrace-clap-tests
