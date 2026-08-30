@@ -20,6 +20,7 @@ jobs:
       - name: Test
         run: ctest --preset windows-release
       - name: Upload Windows test plug-in
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ToneTrace-unmerged-windows-x64
