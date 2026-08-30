@@ -25,9 +25,9 @@ versioning, and release dates use `YYYY-MM-DD`.
   visible label aligned to the correct value field and keyboard position.
 - Narrator now receives the complete dB string as a focused UIA notification
   when a band changes, including Up/Down adjustments.
-- The manual-IR warning now places keyboard and accessibility focus on a native
-  read-only copy of the complete decision text when it opens, while keeping OK
-  as the default action, so NVDA announces it without screen review.
+- The manual-IR warning now uses a standard Windows message box whose title
+  contains the complete decision for automatic NVDA speech, with OK as both the
+  focused and default action.
 
 ## [1.0.2] - 2026-08-29
 

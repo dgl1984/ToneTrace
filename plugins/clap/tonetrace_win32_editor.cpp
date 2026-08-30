@@ -226,78 +226,15 @@ void addControlTooltip(HWND tooltip, HWND owner, HWND control,
   SendMessageW(tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
 }
 
-constexpr UINT kAnnounceManualIrWarning = WM_APP + 0x63;
-
-INT_PTR CALLBACK manualIrWarningProc(HWND dialog, UINT message,
-                                     WPARAM wParam, LPARAM) {
-  switch (message) {
-    case WM_INITDIALOG: {
-      HWND warning = GetDlgItem(dialog, IDC_MANUAL_IR_WARNING_TEXT);
-      SetDlgItemTextW(
-          dialog, IDC_MANUAL_IR_WARNING_TEXT,
-          L"No learned match is available.\r\n\r\n"
-          L"Tone Trace will export an impulse response of the manually "
-          L"created curve that is currently active.\r\n\r\n"
-          L"Do you want to continue?");
-      SendMessageW(dialog, DM_SETDEFID, IDOK, 0);
-      if (warning != nullptr) {
-        SendMessageW(warning, EM_SETSEL, 0, 0);
-        SetFocus(warning);
-        // Repeat the native focus event once the modal dialog is visible. NVDA
-        // can otherwise receive the initialization focus before it has begun
-        // tracking the newly shown dialog and omit the warning text.
-        PostMessageW(dialog, kAnnounceManualIrWarning, 0, 0);
-        return FALSE;
-      }
-      return TRUE;
-    }
-    case kAnnounceManualIrWarning: {
-      HWND warning = GetDlgItem(dialog, IDC_MANUAL_IR_WARNING_TEXT);
-      if (warning != nullptr) {
-        SetFocus(warning);
-        NotifyWinEvent(EVENT_OBJECT_FOCUS, warning, OBJID_CLIENT, CHILDID_SELF);
-      }
-      return TRUE;
-    }
-    case WM_COMMAND:
-      if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL) {
-        EndDialog(dialog, LOWORD(wParam));
-        return TRUE;
-      }
-      break;
-    case WM_CLOSE:
-      EndDialog(dialog, IDCANCEL);
-      return TRUE;
-    default:
-      break;
-  }
-  return FALSE;
-}
-
-HINSTANCE manualIrWarningModule() {
-  HINSTANCE instance = nullptr;
-  GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                         GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                     reinterpret_cast<LPCWSTR>(&manualIrWarningProc), &instance);
-  return instance;
-}
-
 int confirmManualIrExport(HWND owner) {
-  const INT_PTR answer = DialogBoxParamW(
-      manualIrWarningModule(), MAKEINTRESOURCEW(IDD_MANUAL_IR_WARNING), owner,
-      manualIrWarningProc, 0);
-  if (answer == IDOK || answer == IDCANCEL) {
-    return static_cast<int>(answer);
-  }
-
-  // Retain a standard fallback if the plug-in resource cannot be created.
   return MessageBoxW(
       owner,
       L"No learned match is available. Tone Trace will export an impulse "
       L"response of the manually created curve that is currently active.\n\n"
       L"Continue?",
-      L"Export Manual Curve",
-      MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON1);
+      L"No learned match is available. Export the impulse response of the "
+      L"manually created curve?",
+      MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON1 | MB_SETFOREGROUND);
 }
 
 }  // namespace
