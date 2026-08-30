@@ -19,6 +19,12 @@ jobs:
         run: cmake --build --preset windows-release --parallel
       - name: Test
         run: ctest --preset windows-release
+      - name: Upload Windows test plug-in
+        uses: actions/upload-artifact@v4
+        with:
+          name: ToneTrace-unmerged-windows-x64
+          path: build-cmake/windows-x64-release/plugins/clap/Release/Tone Trace EQ.clap
+          if-no-files-found: error
 
   linux:
     name: Linux verification
