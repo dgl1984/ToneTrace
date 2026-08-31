@@ -1,0 +1,75 @@
+   regionalCapture({6, 6, 6, 6, -6, -6, -6}));
+-  require(containsText(stepText, "below 2 kHz") &&
++  require(containsText(stepText, "shelf transition") &&
++              containsText(stepText, "2 kHz") &&
+               !containsText(stepText, "tilts"),
+           "Hard step was incorrectly softened into a tilt: " + stepText);
+ 
+-  const std::string smileText = tonetrace::describeCapture(
++  const std::string outerBoostText = tonetrace::describeCapture(
+       regionalCapture({6, 6, 0, -4, 0, 6, 6}));
+-  require(containsText(smileText, "smile") &&
+-              containsText(smileText, "dip"),
+-          "Smile shape lost one of its outer lobes: " + smileText);
+-
+-  const std::string frownText = tonetrace::describeCapture(
++  require(containsText(outerBoostText, "peak") &&
++              containsText(outerBoostText, "dip") &&
++              !containsText(outerBoostText, "smile") &&
++              !containsText(outerBoostText, "frown"),
++          "Three-feature outer-boost shape lost a literal band feature: " +
++              outerBoostText);
++
++  const std::string outerCutText = tonetrace::describeCapture(
+       regionalCapture({-6, -6, 0, 4, 0, -6, -6}));
+-  require(containsText(frownText, "frown") &&
+-              containsText(frownText, "peak"),
+-          "Frown shape lost one of its outer lobes: " + frownText);
++  require(containsText(outerCutText, "peak") &&
++              containsText(outerCutText, "dip") &&
++              !containsText(outerCutText, "smile") &&
++              !containsText(outerCutText, "frown"),
++          "Three-feature outer-cut shape lost a literal band feature: " +
++              outerCutText);
+ 
+   const std::string outlierText = tonetrace::describeCapture(
+       regionalCapture({0, 0, 0, 0, 3, 0, 0}));
+@@ -797,7 +810,7 @@ void testDescriptionHonesty() {
+   snapshot.reference = regionalCapture({0, 0, 0, 0, 0, 0, 0});
+   snapshot.target = regionalCapture({-3, -3, -3, -3, 0, 0, 0});
+   const auto delta = tonetrace::describeToneTrace(snapshot);
+-  require(containsText(delta.summary, "Target is 3 dB quieter than Reference below 2 kHz"),
++  require(containsText(delta.summary, "Target is 3 dB lower than Reference below 2 kHz"),
+           "Target-vs-Reference broad low difference disappeared: " + delta.summary);
+ 
+   snapshot.reference = regionalCapture({6, 6, 0, 0, 0, 0, 0});
+@@ -860,8 +873,10 @@ void testDescriptionHonesty() {
+       std::lround(targetLog * static_cast<double>(manual.manualGains.size() - 1)));
+   manual.manualGains[manualIndex] = 6.0;
+   const std::string manualText = tonetrace::describeCorrection(flat, 18.0, manual);
+-  require(!containsText(manualText, "gentle across the whole range") &&
+-              (containsText(manualText, "bass") || containsText(manualText, "below")),
++  require(!containsText(manualText, "gentle across the active frequency range") &&
++              (containsText(manualText, "boost") ||
++               containsText(manualText, "peak") ||
++               containsText(manualText, "below")),
+           "Manual trim did not reach the applied Correction description: " +
+               manualText);
+ 
+@@ -875,10 +890,12 @@ void testDescriptionHonesty() {
+   sloped.nodes = {{60.0, 6.0, 1.0}, {16000.0, -6.0, 1.0}};
+   const std::string partialText =
+       tonetrace::describeCorrection(sloped, 18.0, partial);
+-  require(!containsText(partialText, "sub (20 to 60 Hz)") &&
+-              containsText(partialText, "brilliance from 12 kHz to 16 kHz") &&
+-              !containsText(partialText, "brilliance (12 to 20 kHz)") &&
+-              !containsText(partialText, "60-250"),
++  require(containsText(partialText, "60 Hz") &&
++              containsText(partialText, "16 kHz") &&
++              !containsText(partialText, "sub") &&
++              !containsText(partialText, "presence") &&
++              !containsText(partialText, "air") &&
++              !containsText(partialText, "brilliance"),
+           "Partial Correction range was described as full named regions: " +
+               partialText);
+ 
