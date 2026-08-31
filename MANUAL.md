@@ -132,7 +132,7 @@ During capture, Tone Trace may report:
 - `Capturing Reference; collecting`
 - `Capturing Reference; unstable audio`
 - low, medium, or high confidence
-- `Reference capture ready`
+- `Capturing Reference; stable; waiting for Low confidence`
 
 **Capture Time counts accepted audio, not simply wall-clock playback time.** If the input is silent or below the capture gate, the timer may barely move even though the transport is running.
 
@@ -144,11 +144,11 @@ Choose **Learn Target** in the Windows editor. This does two things in order: it
 
 Because the Reference is committed first, you can use **Export → Reference Curve (`.tts`)** immediately afterward if your only goal is to create a reusable Reference rather than complete a match.
 
-If the Reference does not yet contain enough accepted material, the command is rejected, the workflow returns to Reference capture, and the status becomes `Cannot save yet; keep capturing`.
+A live Reference must reach at least **Low confidence** before Learn Target is accepted. This is the same minimum confidence rule used for the live Target. If the Reference is still below Low confidence, the command is rejected, the workflow stays on Reference capture, and Status says `Reference not ready; keep capturing until confidence reaches Low`.
 
 Now play the sound you actually want to correct.
 
-The Target uses the same status ladder as the Reference. Under normal conditions, Tone Trace requires at least a low-confidence Target before it will calculate a correction. More representative material is usually better, but you do not need to wait for High if the capture is already stable and representative.
+The Target uses the same readiness rule as the Reference: under normal conditions it must reach at least **Low confidence** before Correct Target is accepted. More representative material is usually better, but you do not need to wait for Medium or High if Low is already representative enough for your material.
 
 There is one deliberate fallback: if the approximately 30-second **accepted-audio** buffer becomes full while confidence is still zero, the status says `Capture full; continue workflow` and **Correct Target is allowed**. Confidence remains at zero rather than pretending the capture became more reliable. Use Preview to judge that result carefully; if it sounds wrong, Reset and capture more representative material.
 
@@ -158,7 +158,7 @@ Choose **Correct Target**. Tone Trace analyzes the two captures and builds the c
 
 When the model is ready, Status becomes `Preview correction` and the correction is active.
 
-If the Target is not usable yet, the command is rejected and Tone Trace returns you to the Target-learning step. A descending warning sweep may accompany the rejection when tone notifications are enabled.
+If the Target is still below Low confidence, the command is rejected, the workflow stays on Target learning, and Status says `Target not ready; keep capturing until confidence reaches Low`. A descending warning sweep may accompany the rejection when tone notifications are enabled. The native buttons and the host/OSARA Workflow Step use this same engine-level gate; neither route can bypass it.
 
 ### Freeze Correction
 
@@ -202,9 +202,10 @@ Confidence is not a promise that the capture represents everything the source ca
 | `... collecting` | Tone Trace is gathering accepted material. |
 | `... unstable audio` | The running estimate is still moving significantly. |
 | low / medium / high confidence | Increasing reliability of the accepted material. |
-| `Reference capture ready` | The Reference can be saved. |
-| `Target capture ready` | The Target is usable for matching. |
-| `Cannot save yet; keep capturing` | Reference capture is still insufficient. |
+| `Capturing Reference; stable; waiting for Low confidence` | The estimate is stable, but the Reference has not reached the minimum workflow confidence yet. |
+| `Learning Target; stable; waiting for Low confidence` | The estimate is stable, but the Target has not reached the minimum workflow confidence yet. |
+| `Reference not ready; keep capturing until confidence reaches Low` | Learn Target was requested before the Reference reached the shared minimum confidence gate. |
+| `Target not ready; keep capturing until confidence reaches Low` | Correct Target was requested before the Target reached the shared minimum confidence gate. |
 | `Analyzing` | Tone Trace is calculating or rebuilding a profile. |
 | `Preview correction` | A correction is active but not frozen. |
 | `Frozen correction` | Learning is stopped; the saved correction is active. |
@@ -345,14 +346,16 @@ Tone Trace's Windows editor uses real Win32 controls for keyboard and screen-rea
 
 The read-only text box containing the natural-language curve summary has the
 native accessible label **Curve Description**. It gives every user a concise
-overview of broad tonal geometry — shelves, peaks or dips, tilts, smile/frown
-shapes, the Target-vs-Reference difference, and the applied correction. It is
+overview of broad tonal geometry using plain EQ language — frequency bands,
+boosts, cuts, peaks, notches, shelves, and tilts — plus the Target-vs-Reference
+difference and the applied correction. Subjective zone names such as presence,
+air, and brilliance are intentionally not used. It is
 not a sample-by-sample transcription of the graph; exact point Hz/dB values stay
 in the readout. Its displayed text is the value, not the control name.
 
 The native editor is the complete supported interface. Its labeled **Status** panel shows the current workflow state and, while capturing, the accepted capture time, confidence, curve drift, and last meaningful action. Meaningful state changes are announced through normal Windows accessibility events; continuously changing time/drift telemetry is visually refreshed at a restrained rate instead of generating constant speech.
 
-The host's generic parameter view exposes the writable workflow, matching, safety, and global controls. It does **not** expose live Status, Last Command, Capture Confidence, Curve Drift, or Capture Time as automation parameters. Correction Resolution remains deliberately available both there and in the native Bands pages. The native editor also provides the trace-band editor, Curve Description, Options, and Import/Export commands.
+The host's generic parameter view exposes the writable workflow, matching, safety, and global controls. It also exposes one concise read-only **Status** value so a rejected Workflow Step is understandable from an OSARA/control-surface route. Status is **not automatable** and only changes on meaningful state transitions. Last Command, Capture Confidence, Curve Drift, and Capture Time remain native-panel telemetry rather than host automation. Correction Resolution remains deliberately available both there and in the native Bands pages. The native editor also provides the trace-band editor, Curve Description, Options, and Import/Export commands.
 
 ### Reading the Match graph
 

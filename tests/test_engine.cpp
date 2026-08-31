@@ -708,46 +708,52 @@ void testCurveDescription() {
 
   const auto highCut = regionalCapture({0, 0, 0, 0, 0, -6, -6});
   const std::string highCutText = tonetrace::describeCapture(highCut);
-  require(containsText(highCutText, "quieter above 6 kHz") &&
+  require(containsText(highCutText, "high shelf shape") &&
+              containsText(highCutText, "above 6 kHz") &&
               !containsText(highCutText, "Most prominent") &&
-              !containsText(highCutText, "bass") &&
-              !containsText(highCutText, "60-250"),
+              !containsText(highCutText, "presence") &&
+              !containsText(highCutText, "air") &&
+              !containsText(highCutText, "brilliance"),
           "High-frequency cut invented a complementary bass peak or old wording: " +
               highCutText);
 
   const auto lowShelf = regionalCapture({6, 6, 6, 6, 0, 0, 0});
   const std::string lowShelfText = tonetrace::describeCapture(lowShelf);
-  require(containsText(lowShelfText, "louder below 2 kHz") &&
+  require(containsText(lowShelfText, "low shelf shape") &&
+              containsText(lowShelfText, "below 2 kHz") &&
               !containsText(lowShelfText, "Most prominent"),
           "Broad four-region low shelf was not described as one shelf: " +
               lowShelfText);
 
   const auto highShelf = regionalCapture({0, 0, 0, 6, 6, 6, 6});
   const std::string highShelfText = tonetrace::describeCapture(highShelf);
-  require(containsText(highShelfText, "louder above 500 Hz"),
+  require(containsText(highShelfText, "high shelf shape") &&
+              containsText(highShelfText, "above 500 Hz"),
           "Broad high shelf was not described as one high feature: " +
               highShelfText);
 
   const auto midBump = regionalCapture({0, 0, 6, 6, 6, 0, 0});
   const std::string midBumpText = tonetrace::describeCapture(midBump);
   require(containsText(midBumpText, "peak") &&
-              containsText(midBumpText, "low mid") &&
-              !containsText(midBumpText, "below 250 Hz"),
+              containsText(midBumpText, "250 Hz to 6 kHz") &&
+              !containsText(midBumpText, "low mid") &&
+              !containsText(midBumpText, "presence"),
           "Broad mid bump was misclassified: " + midBumpText);
 
-  const auto presenceBell = regionalCapture({0, 0, 0, 0, 6, 0, 0});
-  const std::string bellText = tonetrace::describeCapture(presenceBell);
+  const auto upperBell = regionalCapture({0, 0, 0, 0, 6, 0, 0});
+  const std::string bellText = tonetrace::describeCapture(upperBell);
   require(containsText(bellText, "6 dB peak") &&
-              containsText(bellText, "presence (2 to 6 kHz)") &&
+              containsText(bellText, "2 to 6 kHz") &&
+              !containsText(bellText, "presence") &&
               !containsText(bellText, "tilts"),
-          "Presence bell description is not a local peak: " + bellText);
+          "Upper-band bell description is not a local peak: " + bellText);
 
-  const auto notch = regionalCapture({0, 0, 0, -6, 0, 0, 0});
+  const auto notch = regionalCapture({0, 0, -6, 0, 0, 0, 0});
   const std::string notchText = tonetrace::describeCapture(notch);
-  require(containsText(notchText, "6 dB dip") &&
-              containsText(notchText, "mid (500 Hz to 2 kHz)") &&
+  require(containsText(notchText, "6 dB notch") &&
+              containsText(notchText, "250 to 500 Hz") &&
               !containsText(notchText, "smile"),
-          "Mid notch description is not a local dip: " + notchText);
+          "Narrow cut was not described as a notch: " + notchText);
 
   std::array<double, 7> tiltLevels{};
   const auto& bands = tonetrace::curveBands();
@@ -766,21 +772,28 @@ void testCurveDescription() {
 
   const std::string stepText = tonetrace::describeCapture(
       regionalCapture({6, 6, 6, 6, -6, -6, -6}));
-  require(containsText(stepText, "below 2 kHz") &&
+  require(containsText(stepText, "shelf transition") &&
+              containsText(stepText, "2 kHz") &&
               !containsText(stepText, "tilts"),
           "Hard step was incorrectly softened into a tilt: " + stepText);
 
-  const std::string smileText = tonetrace::describeCapture(
+  const std::string outerBoostText = tonetrace::describeCapture(
       regionalCapture({6, 6, 0, -4, 0, 6, 6}));
-  require(containsText(smileText, "smile") &&
-              containsText(smileText, "dip"),
-          "Smile shape lost one of its outer lobes: " + smileText);
+  require(containsText(outerBoostText, "peak") &&
+              containsText(outerBoostText, "dip") &&
+              !containsText(outerBoostText, "smile") &&
+              !containsText(outerBoostText, "frown"),
+          "Three-feature outer-boost shape lost a literal band feature: " +
+              outerBoostText);
 
-  const std::string frownText = tonetrace::describeCapture(
+  const std::string outerCutText = tonetrace::describeCapture(
       regionalCapture({-6, -6, 0, 4, 0, -6, -6}));
-  require(containsText(frownText, "frown") &&
-              containsText(frownText, "peak"),
-          "Frown shape lost one of its outer lobes: " + frownText);
+  require(containsText(outerCutText, "peak") &&
+              containsText(outerCutText, "dip") &&
+              !containsText(outerCutText, "smile") &&
+              !containsText(outerCutText, "frown"),
+          "Three-feature outer-cut shape lost a literal band feature: " +
+              outerCutText);
 
   const std::string outlierText = tonetrace::describeCapture(
       regionalCapture({0, 0, 0, 0, 3, 0, 0}));
@@ -797,7 +810,7 @@ void testDescriptionHonesty() {
   snapshot.reference = regionalCapture({0, 0, 0, 0, 0, 0, 0});
   snapshot.target = regionalCapture({-3, -3, -3, -3, 0, 0, 0});
   const auto delta = tonetrace::describeToneTrace(snapshot);
-  require(containsText(delta.summary, "Target is 3 dB quieter than Reference below 2 kHz"),
+  require(containsText(delta.summary, "Target is 3 dB lower than Reference below 2 kHz"),
           "Target-vs-Reference broad low difference disappeared: " + delta.summary);
 
   snapshot.reference = regionalCapture({6, 6, 0, 0, 0, 0, 0});
@@ -860,8 +873,10 @@ void testDescriptionHonesty() {
       std::lround(targetLog * static_cast<double>(manual.manualGains.size() - 1)));
   manual.manualGains[manualIndex] = 6.0;
   const std::string manualText = tonetrace::describeCorrection(flat, 18.0, manual);
-  require(!containsText(manualText, "gentle across the whole range") &&
-              (containsText(manualText, "bass") || containsText(manualText, "below")),
+  require(!containsText(manualText, "gentle across the active frequency range") &&
+              (containsText(manualText, "boost") ||
+               containsText(manualText, "peak") ||
+               containsText(manualText, "below")),
           "Manual trim did not reach the applied Correction description: " +
               manualText);
 
@@ -875,10 +890,12 @@ void testDescriptionHonesty() {
   sloped.nodes = {{60.0, 6.0, 1.0}, {16000.0, -6.0, 1.0}};
   const std::string partialText =
       tonetrace::describeCorrection(sloped, 18.0, partial);
-  require(!containsText(partialText, "sub (20 to 60 Hz)") &&
-              containsText(partialText, "brilliance from 12 kHz to 16 kHz") &&
-              !containsText(partialText, "brilliance (12 to 20 kHz)") &&
-              !containsText(partialText, "60-250"),
+  require(containsText(partialText, "60 Hz") &&
+              containsText(partialText, "16 kHz") &&
+              !containsText(partialText, "sub") &&
+              !containsText(partialText, "presence") &&
+              !containsText(partialText, "air") &&
+              !containsText(partialText, "brilliance"),
           "Partial Correction range was described as full named regions: " +
               partialText);
 

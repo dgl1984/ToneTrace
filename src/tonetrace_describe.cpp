@@ -142,20 +142,17 @@ struct SignedRun {
 
 [[nodiscard]] std::string regionLabel(const RegionLevel& region) {
   if (region.band == nullptr) return {};
-  if (region.partial) {
-    return std::string(region.band->name) + " from " + formatHz(region.lowHz) +
-           " to " + formatHz(region.highHz);
-  }
-  return std::string(region.band->name) + " (" +
-         formatRange(region.band->lowHz, region.band->highHz) + ")";
+  return formatRange(region.lowHz, region.highHz) + " band";
 }
 
 [[nodiscard]] std::string runSpan(const SignedRun& run) {
   if (run.regions.empty()) return {};
-  if (run.regions.size() == 1) return regionLabel(run.regions.front());
-  return "from " + std::string(run.regions.front().band->name) + " through " +
-         std::string(run.regions.back().band->name) + " (" +
-         formatRange(run.lowHz(), run.highHz()) + ")";
+  return formatRange(run.lowHz(), run.highHz());
+}
+
+[[nodiscard]] bool narrowNotch(const SignedRun& run) {
+  return run.regions.size() == 1 && run.lowHz() > 0.0 &&
+         run.highHz() / run.lowHz() <= 2.5;
 }
 
 struct CaptureBandMean {
@@ -328,23 +325,23 @@ struct CaptureBandMean {
     const double residual = level.levelDb - predicted;
     squaredResiduals += residual * residual;
   }
-  const double rms = std::sqrt(squaredResiduals / static_cast<double>(active.size()));
+  const double rms =
+      std::sqrt(squaredResiduals / static_cast<double>(active.size()));
   if (rms > kTiltResidualDb) return false;
 
   const char* direction = signedSpan > 0.0 ? "up" : "down";
+  const std::string spanText =
+      formatRange(active.front().lowHz, active.back().highHz);
   std::ostringstream sentence;
   if (kind == DescriptionKind::Capture) {
     sentence << "The curve tilts " << direction << " by " << plainDb(span)
-             << " from " << regionLabel(active.front()) << " to "
-             << regionLabel(active.back()) << '.';
+             << " across " << spanText << '.';
   } else if (kind == DescriptionKind::Correction) {
     sentence << "The correction tilts " << direction << " by " << plainDb(span)
-             << " from " << regionLabel(active.front()) << " to "
-             << regionLabel(active.back()) << '.';
+             << " across " << spanText << '.';
   } else {
     sentence << "Target tilts " << direction << " by " << plainDb(span)
-             << " relative to Reference from " << regionLabel(active.front())
-             << " to " << regionLabel(active.back()) << '.';
+             << " relative to Reference across " << spanText << '.';
   }
   output = sentence.str();
   return true;
@@ -434,6 +431,49 @@ struct CaptureBandMean {
   return {lowest, highest};
 }
 
+[[nodiscard]] std::string featureFragment(const SignedRun& run,
+                                          DescriptionKind kind) {
+  const bool boost = run.meanDb() > 0.0;
+  const double magnitude = std::abs(run.peakDb());
+  const std::string range = runSpan(run);
+  const std::string amount = plainDb(magnitude);
+
+  std::ostringstream out;
+  if (kind == DescriptionKind::Capture) {
+    if (boost) {
+      out << "a " << amount << " peak from " << range;
+    } else if (narrowNotch(run)) {
+      out << "a " << amount << " notch from " << range;
+    } else {
+      out << "a " << amount << " dip from " << range;
+    }
+  } else if (kind == DescriptionKind::Correction) {
+    if (boost) {
+      out << "a " << amount << " boost from " << range;
+    } else if (narrowNotch(run)) {
+      out << "a " << amount << " notch from " << range;
+    } else {
+      out << "a " << amount << " cut from " << range;
+    }
+  } else {
+    out << amount << ' ' << (boost ? "higher" : "lower")
+        << " from " << range;
+  }
+  return out.str();
+}
+
+[[nodiscard]] std::string joinFeatures(const std::vector<SignedRun>& runs,
+                                       DescriptionKind kind) {
+  std::ostringstream out;
+  for (std::size_t index = 0; index < runs.size(); ++index) {
+    if (index > 0) {
+      out << (index + 1 == runs.size() ? ", and " : ", ");
+    }
+    out << featureFragment(runs[index], kind);
+  }
+  return out.str();
+}
+
 [[nodiscard]] std::string oneRunSentence(const SignedRun& run,
                                          const std::vector<RegionLevel>& levels,
                                          DescriptionKind kind) {
@@ -441,78 +481,59 @@ struct CaptureBandMean {
   const bool touchesLow = run.firstBandIndex() == lowestActive;
   const bool touchesHigh = run.lastBandIndex() == highestActive;
   const double mean = run.meanDb();
-  const double peak = run.peakDb();
   const bool boost = mean > 0.0;
-  const std::string meanText = plainDb(mean);
-  const std::string peakText = plainDb(peak);
+  const std::string amount = plainDb(mean);
 
   std::ostringstream out;
   if (touchesLow && !touchesHigh) {
     const std::string boundary = formatHz(run.highHz());
     if (kind == DescriptionKind::Capture) {
-      out << "The curve is " << meanText << ' '
-          << (boost ? "louder" : "quieter") << " below " << boundary
-          << " than above it.";
+      out << "A low shelf shape: the band below " << boundary << " is "
+          << amount << ' ' << (boost ? "higher" : "lower")
+          << " than the band above it.";
     } else if (kind == DescriptionKind::Correction) {
-      out << "The correction " << (boost ? "boosts" : "cuts") << " below "
-          << boundary << " by " << meanText << '.';
+      out << "A low shelf " << (boost ? "boosts" : "cuts")
+          << " frequencies below " << boundary << " by " << amount << '.';
     } else {
-      out << "Target is " << meanText << ' '
-          << (boost ? "louder" : "quieter")
+      out << "Target is " << amount << ' ' << (boost ? "higher" : "lower")
           << " than Reference below " << boundary << '.';
     }
   } else if (touchesHigh && !touchesLow) {
     const std::string boundary = formatHz(run.lowHz());
     if (kind == DescriptionKind::Capture) {
-      out << "The curve is " << meanText << ' '
-          << (boost ? "louder" : "quieter") << " above " << boundary
-          << " than below it.";
+      out << "A high shelf shape: the band above " << boundary << " is "
+          << amount << ' ' << (boost ? "higher" : "lower")
+          << " than the band below it.";
     } else if (kind == DescriptionKind::Correction) {
-      out << "The correction " << (boost ? "boosts" : "cuts") << " above "
-          << boundary << " by " << meanText << '.';
+      out << "A high shelf " << (boost ? "boosts" : "cuts")
+          << " frequencies above " << boundary << " by " << amount << '.';
     } else {
-      out << "Target is " << meanText << ' '
-          << (boost ? "louder" : "quieter")
+      out << "Target is " << amount << ' ' << (boost ? "higher" : "lower")
           << " than Reference above " << boundary << '.';
     }
   } else if (touchesLow && touchesHigh) {
+    const std::string range = runSpan(run);
     if (kind == DescriptionKind::Capture) {
-      out << "A broad " << meanText << ' ' << (boost ? "boost" : "cut")
-          << " across the active range.";
+      out << "The curve has a broad " << amount << ' '
+          << (boost ? "peak" : "dip") << " from " << range << '.';
     } else if (kind == DescriptionKind::Correction) {
-      out << "The correction applies a broad " << meanText << ' '
-          << (boost ? "boost" : "cut") << " across the active range.";
+      out << "The correction applies a broad " << amount << ' '
+          << (boost ? "boost" : "cut") << " from " << range << '.';
     } else {
-      out << "Target is " << meanText << ' ' << (boost ? "louder" : "quieter")
-          << " than Reference across the active range.";
+      out << "Target is " << amount << ' ' << (boost ? "higher" : "lower")
+          << " than Reference from " << range << '.';
     }
   } else {
-    const std::string span = runSpan(run);
+    const std::string fragment = featureFragment(run, kind);
     if (kind == DescriptionKind::Capture) {
-      out << "A " << peakText << ' ' << (peak > 0.0 ? "peak" : "dip")
-          << " in " << span << '.';
+      out << "The curve has " << fragment << '.';
     } else if (kind == DescriptionKind::Correction) {
-      out << "The correction " << (peak > 0.0 ? "boosts " : "cuts ") << span
-          << " by " << peakText << '.';
+      out << "The correction applies " << fragment << '.';
     } else {
-      out << "Target is " << peakText << ' '
-          << (peak > 0.0 ? "louder" : "quieter")
-          << " than Reference in " << span << '.';
+      out << "Compared with Reference, Target is " << fragment << '.';
     }
   }
   return out.str();
-}
-
-[[nodiscard]] std::string genericRunFragment(
-    const SignedRun& run, const std::vector<RegionLevel>& levels,
-    DescriptionKind kind) {
-  std::string sentence = oneRunSentence(run, levels, kind);
-  if (!sentence.empty() && sentence.back() == '.') sentence.pop_back();
-  if (sentence.rfind("The curve is ", 0) == 0) sentence.erase(0, 13);
-  if (sentence.rfind("The correction ", 0) == 0) sentence.erase(0, 15);
-  if (sentence.rfind("Target is ", 0) == 0) sentence.erase(0, 10);
-  if (!sentence.empty()) sentence[0] = static_cast<char>(std::tolower(sentence[0]));
-  return sentence;
 }
 
 [[nodiscard]] std::string runSentence(const std::vector<RegionLevel>& levels,
@@ -532,15 +553,17 @@ struct CaptureBandMean {
   const std::vector<SignedRun> runs = signedRuns(levels);
   if (runs.empty()) {
     if (kind == DescriptionKind::Capture) {
-      return "The curve is close to flat across the audible range.";
+      return "The curve is close to flat across the active frequency range.";
     }
     if (kind == DescriptionKind::Correction) {
-      return "The correction is gentle across the whole range.";
+      return "The correction is gentle across the active frequency range.";
     }
     return "Reference and Target have a similar tonal shape.";
   }
   if (runs.size() == 1) return oneRunSentence(runs.front(), levels, kind);
 
+  // Two adjacent opposite-sign runs are one shelf/step relationship, not two
+  // independent tonal features.
   if (runs.size() == 2 && runs[0].classification != runs[1].classification) {
     const double firstMean = runs[0].meanDb();
     const double secondMean = runs[1].meanDb();
@@ -549,84 +572,33 @@ struct CaptureBandMean {
     const std::string boundary = formatHz(runs[1].lowHz());
     std::ostringstream out;
     if (kind == DescriptionKind::Capture) {
-      out << "The curve is " << plainDb(difference) << ' '
-          << (firstHigher ? "louder" : "quieter") << " below " << boundary
-          << " than above it.";
+      out << "A shelf transition of " << plainDb(difference) << " around "
+          << boundary << "; the band below it is "
+          << (firstHigher ? "higher" : "lower") << '.';
     } else if (kind == DescriptionKind::Correction) {
-      out << "The correction is " << plainDb(difference) << " stronger "
-          << (firstHigher ? "below " : "above ") << boundary << " than "
-          << (firstHigher ? "above" : "below") << " it.";
+      out << "A shelf correction changes by " << plainDb(difference)
+          << " around " << boundary << ", with more gain "
+          << (firstHigher ? "below" : "above") << " that point.";
     } else {
-      out << "Compared with Reference, Target is " << plainDb(difference) << ' '
-          << (firstHigher ? "louder" : "quieter") << " below " << boundary
-          << " than above it.";
-    }
-    return out.str();
-  }
-
-  if (runs.size() == 2 && runs[0].classification == runs[1].classification) {
-    const bool boost = runs[0].classification == SignedClass::Boost;
-    std::ostringstream out;
-    if (kind == DescriptionKind::Capture) {
-      out << (boost ? "Boosts" : "Cuts") << " of " << plainDb(runs[0].peakDb())
-          << " in " << runSpan(runs[0]) << " and " << plainDb(runs[1].peakDb())
-          << " in " << runSpan(runs[1]) << '.';
-    } else if (kind == DescriptionKind::Correction) {
-      out << "The correction " << (boost ? "boosts " : "cuts ")
-          << runSpan(runs[0]) << " by " << plainDb(runs[0].peakDb()) << " and "
-          << runSpan(runs[1]) << " by " << plainDb(runs[1].peakDb()) << '.';
-    } else {
-      out << "Target is " << plainDb(runs[0].peakDb()) << ' '
-          << (boost ? "louder" : "quieter") << " than Reference in "
-          << runSpan(runs[0]) << " and " << plainDb(runs[1].peakDb()) << ' '
-          << (boost ? "louder" : "quieter") << " in " << runSpan(runs[1])
+      out << "Compared with Reference, Target has a shelf transition of "
+          << plainDb(difference) << " around " << boundary
+          << "; the band below it is " << (firstHigher ? "higher" : "lower")
           << '.';
     }
     return out.str();
   }
 
-  if (runs.size() == 3 &&
-      runs[0].classification == runs[2].classification &&
-      runs[0].classification != runs[1].classification) {
-    const bool smile = runs[0].classification == SignedClass::Boost;
-    std::ostringstream out;
-    if (kind == DescriptionKind::Capture) {
-      out << "A " << (smile ? "smile" : "frown") << " curve: "
-          << plainDb(runs[0].peakDb()) << " in " << runSpan(runs[0]) << " and "
-          << plainDb(runs[2].peakDb()) << " in " << runSpan(runs[2])
-          << ", with a " << plainDb(runs[1].peakDb()) << ' '
-          << (smile ? "dip" : "peak") << " in " << runSpan(runs[1]) << '.';
-    } else if (kind == DescriptionKind::Correction) {
-      out << "A " << (smile ? "smile" : "frown") << " correction: "
-          << plainDb(runs[0].peakDb()) << " in " << runSpan(runs[0]) << " and "
-          << plainDb(runs[2].peakDb()) << " in " << runSpan(runs[2])
-          << ", with a " << plainDb(runs[1].peakDb()) << ' '
-          << (smile ? "dip" : "peak") << " in " << runSpan(runs[1]) << '.';
-    } else {
-      out << "Target has a " << (smile ? "smile" : "frown")
-          << " shape relative to Reference: " << plainDb(runs[0].peakDb())
-          << " in " << runSpan(runs[0]) << " and "
-          << plainDb(runs[2].peakDb()) << " in " << runSpan(runs[2])
-          << ", with a " << plainDb(runs[1].peakDb()) << ' '
-          << (smile ? "dip" : "peak") << " in " << runSpan(runs[1]) << '.';
-    }
-    return out.str();
-  }
-
-  std::ostringstream out;
+  // For multiple separated features, report exactly what the frequency bands
+  // do in low-to-high order. Do not substitute smile/frown or subjective
+  // frequency-zone vocabulary.
+  const std::string features = joinFeatures(runs, kind);
   if (kind == DescriptionKind::Capture) {
-    out << "The curve has ";
-  } else if (kind == DescriptionKind::Correction) {
-    out << "The correction has ";
-  } else {
-    out << "Compared with Reference, Target has ";
+    return "The curve has " + features + ".";
   }
-  for (std::size_t index = 0; index < runs.size(); ++index) {
-    if (index > 0) out << (index + 1 == runs.size() ? ", and " : ", ");
-    out << genericRunFragment(runs[index], levels, kind);
+  if (kind == DescriptionKind::Correction) {
+    return "The correction applies " + features + ".";
   }
-  out << '.';
-  return out.str();
+  return "Compared with Reference, Target is " + features + ".";
 }
 
 [[nodiscard]] bool manualGainsActive(const IrRenderSettings& settings) {

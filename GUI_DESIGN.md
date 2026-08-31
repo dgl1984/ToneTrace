@@ -50,10 +50,12 @@ Canvas interactions:
   visibly repainted as it moves instead of changing only the text readout.
 - Arrow keys move the same cursor (blind + keyboard).
 - The readonly Curve Description box contains a concise natural-language
-  overview of the same learned shapes, e.g.: *"The curve is 6 dB quieter above
-  6 kHz than below it."* Target-vs-Reference and Correction sections use the
-  same shelf/peak/dip/tilt/smile/frown vocabulary. Exact point values remain in
-  the normal readout rather than being duplicated into prose.
+  overview of the same learned shapes, e.g.: *"A high shelf shape: the band
+  above 6 kHz is 6 dB lower than the band below it."* Target-vs-Reference and
+  Correction sections use plain EQ language: band, boost, cut, peak, dip/notch,
+  shelf, and tilt. Subjective zone names such as presence/air/brilliance and
+  smile/frown shorthand are not shown to the user. Exact point values remain
+  in the normal readout rather than being duplicated into prose.
 
 ## Accessibility surface (native controls)
 
