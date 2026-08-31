@@ -2566,6 +2566,9 @@ class ToneTraceClap {
                parameter == tonetrace::ParameterId::ToneNotifications ||
                parameter == tonetrace::ParameterId::Bypass) {
       std::snprintf(output, capacity, "%s", value >= 0.5 ? "On" : "Off");
+    } else if (parameter == tonetrace::ParameterId::Resolution) {
+      std::snprintf(output, capacity, "%.0f %s", value,
+                    std::lround(value) == 1 ? "band" : "bands");
     } else if (descriptors[index].stepped) {
       std::snprintf(output, capacity, "%.0f %s", value, descriptors[index].unit);
     } else {

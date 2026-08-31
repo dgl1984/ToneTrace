@@ -41,6 +41,20 @@ int main() {
     expectToneTrace(14, 14, {7, 7});
     expectToneTrace(15, 14, {8, 7});
     expectToneTrace(30, 6, {6, 6, 6, 6, 6});
+    expectToneTrace(1, 14, {1});
+    expectToneTrace(9, 14, {9});
+    expectToneTrace(10, 14, {10});
+    expectToneTrace(11, 14, {6, 5});
+    expectToneTrace(80, 14, {10, 10, 10, 10, 10, 10, 10, 10});
+    expectToneTrace(81, 14, {9, 9, 9, 9, 9, 9, 9, 9, 9});
+    expectToneTrace(99, 14, {10, 10, 10, 10, 10, 10, 10, 10, 10, 9});
+    expectToneTrace(100, 14, {10, 10, 10, 10, 10, 10, 10, 10, 10, 10});
+    expectToneTrace(116, 14,
+                    {10, 10, 10, 10, 10, 10, 10, 10, 9, 9, 9, 9});
+    expectToneTrace(119, 14,
+                    {10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 9});
+    expectToneTrace(120, 14,
+                    {10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10});
     require(tonetrace::toneTraceBandPageSizes(0, 14).empty(),
             "zero-band layout should be empty");
     std::cout << "Tone Trace balanced band paging tests passed\n";

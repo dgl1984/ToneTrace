@@ -60,6 +60,11 @@ A traditional match EQ often feels finished once it has drawn its curve. Tone Tr
 
 **Match Mode** can be changed after Correct or Freeze, so the same Reference and Target can be heard through different matching approaches without another capture. **Correction Resolution** changes how many bands you have available for manual work without throwing away the higher-resolution learned relationship. **Correction Range Low/High** lets you stop Tone Trace from correcting parts of the spectrum that do not contain useful material. The band pages themselves behave like a graphic EQ: they can be adjusted with the mouse or keyboard and a band can be returned to 0 dB directly.
 
+On Windows, Correction Resolution is available both from the host parameter
+view and from a labeled control on the Bands pages. Those pages retain complete
+names such as **Bands 1-10** at every resolution, and nearby frequency labels
+remain distinct.
+
 For speech and microphone work, Tone Trace also watches for a particular failure that can happen when two different performances contain very different formants or resonances. Voice mode keeps useful detail when it is well supported, but backs away from unusually narrow detail when that detail would turn into a ringy or phasey-sounding correction. This happens automatically; there is no extra safety mode to manage.
 
 For unusually severe restoration work, the normal **Maximum Correction** limit can be raised or bypassed with **Full Correction Range**. Tone Trace will allow large corrections when they are genuinely called for, but it does not pretend that large boosts are free: leave appropriate headroom and use your preferred dynamics processing afterward when needed.

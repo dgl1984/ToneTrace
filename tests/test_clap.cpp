@@ -29,6 +29,7 @@ namespace {
 constexpr clap_id kWorkflow = 100;
 constexpr clap_id kMatchMode = 110;
 constexpr clap_id kCorrectionStrength = 120;
+constexpr clap_id kResolution = 130;
 constexpr clap_id kLastCommand = 195;
 constexpr clap_id kConfidence = 200;
 constexpr clap_id kCurveDrift = 210;
@@ -783,6 +784,16 @@ void run(const char* modulePath,
                                                "Off", &parsedValue) &&
                 parsedValue == -60.0,
             "Confidence Tone Volume does not expose its accessible Off state");
+    require(instance.params->value_to_text(instance.plugin, kResolution, 1.0,
+                                           accessibleText,
+                                           sizeof(accessibleText)) &&
+                std::strcmp(accessibleText, "1 band") == 0 &&
+                instance.params->value_to_text(instance.plugin, kResolution,
+                                               2.0, accessibleText,
+                                               sizeof(accessibleText)) &&
+                std::strcmp(accessibleText, "2 bands") == 0,
+            "Correction Resolution does not use the same singular/plural text "
+            "in the host and native editor");
     require(instance.latency->get(instance.plugin) == 0 &&
                 instance.tail->get(instance.plugin) == 0,
             "ready plugin must be zero latency with no tail");

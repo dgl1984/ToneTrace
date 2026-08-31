@@ -35,6 +35,9 @@ constexpr int kTraceId = 105;
 constexpr int kExportId = 106;
 constexpr int kImportId = 107;
 constexpr int kModeComboId = 200;
+constexpr int kModeLabelId = 201;
+constexpr int kResolutionLabelId = 204;
+constexpr int kResolutionComboId = 205;
 constexpr int kEditFirstId = 300;
 constexpr int kEmergencyGuardEditId = kEditFirstId + 3;
 constexpr int kExportIrMenuId = 600;
@@ -231,20 +234,70 @@ std::wstring tabItemText(HWND tabs, int index) {
 
 void verifyResolutionTabRefresh(const clap_plugin_t* plugin, HWND editor) {
   HWND tabs = GetDlgItem(editor, kTabControlId);
+  HWND resolutionLabel = GetDlgItem(editor, kResolutionLabelId);
+  HWND resolutionCombo = GetDlgItem(editor, kResolutionComboId);
   require(tabs != nullptr, "tab control missing for resolution refresh test");
+  require(resolutionLabel != nullptr && resolutionCombo != nullptr,
+          "native Correction Resolution label/combo is missing");
+  require(SendMessageW(resolutionCombo, CB_GETCOUNT, 0, 0) == 120,
+          "Correction Resolution combo does not expose all 120 choices");
+  wchar_t itemText[64]{};
+  require(SendMessageW(resolutionCombo, CB_GETLBTEXT, 0,
+                       reinterpret_cast<LPARAM>(itemText)) != CB_ERR &&
+              std::wstring(itemText) == L"1 band",
+          "Correction Resolution singular item is not '1 band'");
+  require(SendMessageW(resolutionCombo, CB_GETLBTEXT, 115,
+                       reinterpret_cast<LPARAM>(itemText)) != CB_ERR &&
+              std::wstring(itemText) == L"116 bands",
+          "Correction Resolution combo item text disagrees with the host value");
+
   const int originalCount =
       static_cast<int>(SendMessageW(tabs, TCM_GETITEMCOUNT, 0, 0));
 
-  setParameter(plugin, 130, 61.0);  // Correction Resolution
-  SendMessageW(editor, WM_TIMER, 1, 0);
+  const auto applyFromHost = [&](int resolution) {
+    setParameter(plugin, 130, static_cast<double>(resolution));
+    SendMessageW(editor, WM_TIMER, 1, 0);
+    pumpMessages();
+    const int count =
+        static_cast<int>(SendMessageW(tabs, TCM_GETITEMCOUNT, 0, 0));
+    require(count >= 2, "Resolution produced no Bands-page tabs");
+    for (int index = 1; index < count; ++index) {
+      const std::wstring label = tabItemText(tabs, index);
+      require(label.rfind(L"Bands ", 0) == 0,
+              "a Bands tab lost its complete visible/spoken name at Resolution " +
+                  std::to_string(resolution));
+    }
+    require(tabItemText(tabs, count - 1).find(std::to_wstring(resolution)) !=
+                std::wstring::npos,
+            "last Bands tab does not include the selected Resolution");
+    require(SendMessageW(resolutionCombo, CB_GETCURSEL, 0, 0) ==
+                resolution - 1,
+            "native Resolution selection did not follow the host parameter");
+    return count;
+  };
+
+  for (const int resolution : {1, 9, 10, 11, 30, 80, 81, 99, 100, 116,
+                               119, 120}) {
+    (void)applyFromHost(resolution);
+  }
+
+  applyFromHost(30);
+  selectPage(editor, 1);
+  SetFocus(resolutionCombo);
+  SendMessageW(resolutionCombo, CB_SETCURSEL, 115, 0);
+  SendMessageW(editor, WM_COMMAND,
+               MAKEWPARAM(kResolutionComboId, CBN_SELCHANGE),
+               reinterpret_cast<LPARAM>(resolutionCombo));
   pumpMessages();
+  require(GetFocus() == resolutionCombo,
+          "native Resolution rebuild did not retain combo focus");
 
   const int expandedCount =
       static_cast<int>(SendMessageW(tabs, TCM_GETITEMCOUNT, 0, 0));
   require(expandedCount > originalCount,
           "increasing Resolution did not add band-page tabs");
   const std::wstring lastExpanded = tabItemText(tabs, expandedCount - 1);
-  require(lastExpanded.find(L"61") != std::wstring::npos,
+  require(lastExpanded.find(L"116") != std::wstring::npos,
           "expanded tab label retained the previous band range");
 
   IAccessible* accessible = nullptr;
@@ -264,9 +317,38 @@ void verifyResolutionTabRefresh(const clap_plugin_t* plugin, HWND editor) {
   SysFreeString(accessibleName);
   accessible->Release();
 
-  setParameter(plugin, 130, 30.0);
-  SendMessageW(editor, WM_TIMER, 1, 0);
-  pumpMessages();
+  // The 116-band grid previously gave adjacent bands 67 and 68 the same
+  // visible frequency caption. The value text uses the same frequency helper
+  // as the STATIC label and accessible name, so comparing its frequency field
+  // pins all three paths to distinct names.
+  const auto frequencyField = [](const std::wstring& bandText) {
+    const std::size_t comma = bandText.find(L", ");
+    const std::size_t colon = bandText.find(L": ", comma == std::wstring::npos
+                                                        ? 0 : comma + 2);
+    require(comma != std::wstring::npos && colon != std::wstring::npos,
+            "band value text has no frequency field");
+    return bandText.substr(comma + 2, colon - comma - 2);
+  };
+  HWND band67 = GetDlgItem(editor, kBandSliderFirstId + 66);
+  HWND band68 = GetDlgItem(editor, kBandSliderFirstId + 67);
+  require(band67 != nullptr && band68 != nullptr,
+          "116-band frequency collision controls are missing");
+  require(frequencyField(textOf(band67)) != frequencyField(textOf(band68)),
+          "adjacent high-resolution bands still share a frequency label");
+
+  // An externally supplied Resolution change can arrive while a fader owns
+  // focus (automation/control surface as well as a host parameter view). Keep
+  // the user's proportional place in the rebuilt grid and refresh the page
+  // description instead of leaving stale band numbers behind.
+  selectPage(editor, 7);
+  SetFocus(band67);
+  applyFromHost(120);
+  const int expectedRestoredBand =
+      static_cast<int>(std::lround(66.0 * 119.0 / 115.0));
+  require(GetDlgCtrlID(GetFocus()) == kBandSliderFirstId + expectedRestoredBand,
+          "host Resolution rebuild did not restore the nearest band focus");
+
+  applyFromHost(30);
   require(SendMessageW(tabs, TCM_GETITEMCOUNT, 0, 0) == originalCount,
           "restoring Resolution did not restore the original tab count");
   require(tabItemText(tabs, originalCount - 1).find(L"30") !=
@@ -360,11 +442,16 @@ void verifyKnownGoodKeyboardBaseline(HWND editor) {
   HWND learn = GetDlgItem(editor, kLearnTargetId);
   HWND correct = GetDlgItem(editor, kCorrectTargetId);
   HWND freeze = GetDlgItem(editor, kFreezeId);
+  HWND modeLabel = GetDlgItem(editor, kModeLabelId);
   HWND mode = GetDlgItem(editor, kModeComboId);
   HWND trace = GetDlgItem(editor, kTraceId);
 
-  require(tabs && capture && learn && correct && freeze && mode && trace,
+  require(tabs && capture && learn && correct && freeze && modeLabel && mode &&
+              trace,
           "Match-page keyboard controls are incomplete");
+  require(textOf(modeLabel) == L"Match Mode" &&
+              GetWindow(mode, GW_HWNDPREV) == modeLabel,
+          "Match Mode does not have a visible adjacent native label");
 
   requireNextTab(editor, tabs, false, kCaptureReferenceId, "tabs -> Capture");
   requireNextTab(editor, capture, false, kLearnTargetId, "Capture -> Learn");
@@ -511,6 +598,56 @@ struct ManualWarningObservation {
   std::wstring title;
 };
 
+void verifyFlatExportError(HWND editor) {
+  bool found = false;
+  std::wstring message;
+  const DWORD guiThread = GetWindowThreadProcessId(editor, nullptr);
+  std::thread inspector([&] {
+    HWND dialog = nullptr;
+    for (int attempt = 0; attempt < 300 && dialog == nullptr; ++attempt) {
+      EnumThreadWindows(
+          guiThread,
+          [](HWND candidate, LPARAM context) -> BOOL {
+            wchar_t cls[32]{};
+            GetClassNameW(candidate, cls, static_cast<int>(std::size(cls)));
+            if (_wcsicmp(cls, L"#32770") == 0) {
+              *reinterpret_cast<HWND*>(context) = candidate;
+              return FALSE;
+            }
+            return TRUE;
+          },
+          reinterpret_cast<LPARAM>(&dialog));
+      if (dialog == nullptr) Sleep(10);
+    }
+    if (dialog == nullptr) return;
+    found = true;
+    EnumChildWindows(
+        dialog,
+        [](HWND child, LPARAM context) -> BOOL {
+          wchar_t cls[32]{};
+          GetClassNameW(child, cls, static_cast<int>(std::size(cls)));
+          if (_wcsicmp(cls, L"STATIC") == 0) {
+            const std::wstring text = textOf(child);
+            if (!text.empty()) {
+              auto* combined = reinterpret_cast<std::wstring*>(context);
+              if (!combined->empty()) *combined += L" ";
+              *combined += text;
+            }
+          }
+          return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&message));
+    PostMessageW(dialog, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED), 0);
+  });
+
+  SendMessageW(editor, WM_COMMAND, MAKEWPARAM(kExportIrMenuId, 0), 0);
+  inspector.join();
+  require(found, "flat unmatched IR export did not open its error dialog");
+  require(message.find(L"No matching curve is available to export yet") !=
+              std::wstring::npos,
+          "flat unmatched IR export no longer uses the original no-curve error");
+}
+
 void verifyManualExportWarning(HWND editor) {
   ManualWarningObservation observation;
   const DWORD guiThread = GetWindowThreadProcessId(editor, nullptr);
@@ -610,9 +747,12 @@ void verifyBandMouseAndKeyboard(HWND editor) {
   selectPage(editor, 1);
 
   HWND tabs = GetDlgItem(editor, kTabControlId);
+  HWND resolution = GetDlgItem(editor, kResolutionComboId);
+  HWND trace = GetDlgItem(editor, kTraceId);
   HWND first = GetDlgItem(editor, kBandSliderFirstId);
   HWND second = GetDlgItem(editor, kBandSliderFirstId + 1);
-  require(tabs && first && second, "first Bands-page controls missing");
+  require(tabs && resolution && trace && first && second,
+          "first Bands-page controls missing");
   require(IsWindowVisible(first) != FALSE, "first band is not visible");
 
   wchar_t cls[64]{};
@@ -621,12 +761,16 @@ void verifyBandMouseAndKeyboard(HWND editor) {
           "band control is not the dedicated accessible fader class");
   verifyBandAccessibility(first);
 
-  requireNextTab(editor, tabs, false, kBandSliderFirstId,
-                 "Bands tab -> first band");
+  requireNextTab(editor, tabs, false, kResolutionComboId,
+                 "Bands tab -> Resolution");
+  requireNextTab(editor, resolution, false, kTraceId,
+                 "Resolution -> Trace Curve");
+  requireNextTab(editor, trace, false, kBandSliderFirstId,
+                 "Trace Curve -> first band");
   requireNextTab(editor, first, false, kBandSliderFirstId + 1,
                  "first band -> second band");
-  requireNextTab(editor, first, true, kTabControlId,
-                 "Shift+Tab first band -> tabs");
+  requireNextTab(editor, first, true, kTraceId,
+                 "Shift+Tab first band -> Trace Curve");
 
   SetFocus(first);
   std::wstring before = textOf(first);
@@ -888,6 +1032,15 @@ void verifyDeclaredMinimumLayout(const clap_plugin_t* plugin,
             << bandHeight << " px, painted track: " << track << " px\n";
   require(track >= 60, "declared minimum leaves an unusable fader track");
 
+  RECT firstBandRect{};
+  require(GetWindowRect(firstBand, &firstBandRect) != FALSE,
+          "could not measure first band at declared minimum");
+  POINT firstBandBottom{firstBandRect.right, firstBandRect.bottom};
+  ScreenToClient(editor, &firstBandBottom);
+  require(client.bottom - firstBandBottom.y <=
+              static_cast<LONG>(std::lround(32 * scale)),
+          "Bands page still reserves the hidden Match-control strip");
+
   for (const auto& item : bandRects) {
     require(item.rect.left >= client.left &&
                 item.rect.top >= client.top &&
@@ -974,6 +1127,7 @@ void run(const char* path) {
 
     verifyKnownGoodKeyboardBaseline(editor);
     verifyResolutionTabRefresh(instance.plugin, editor);
+    verifyFlatExportError(editor);
     verifyManualBandBeforeProfile(editor);
     commitCorrectionProfile(instance.plugin);
     verifyBandMouseAndKeyboard(editor);

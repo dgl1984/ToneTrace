@@ -47,8 +47,12 @@ namespace {
 
 constexpr int kTabControlId = 50;
 constexpr int kCaptureReferenceId = 100;
+constexpr int kModeComboId = 200;
+constexpr int kModeLabelId = 201;
 constexpr int kDescriptionLabelId = 202;
 constexpr int kDescriptionEditId = 203;
+constexpr int kResolutionLabelId = 204;
+constexpr int kResolutionComboId = 205;
 constexpr int kBandSliderFirstId = 2000;
 constexpr wchar_t kFaderClass[] = L"ToneTraceAccessibleFader";
 
@@ -333,6 +337,14 @@ std::wstring UiaAutoId(IUIAutomationElement* e) {
       v.vt == VT_BSTR && v.bstrVal) o = v.bstrVal;
   VariantClear(&v); return o;
 }
+std::wstring UiaName(IUIAutomationElement* e) {
+  BSTR text = nullptr;
+  const bool ok = e != nullptr && SUCCEEDED(e->get_CurrentName(&text)) &&
+                  text != nullptr;
+  std::wstring result = ok ? std::wstring(text) : L"";
+  if (text != nullptr) SysFreeString(text);
+  return result;
+}
 bool UiaValue(IUIAutomationElement* e, std::wstring& value) {
   IUnknown* pattern = nullptr;
   IUIAutomationValuePattern* provider = nullptr;
@@ -595,10 +607,46 @@ void Run(const char* clapPath) {
           "Curve Description edit exposes the wrong accessible name");
   descriptionAccessible->Release();
 
+  const auto verifyNativeLabel = [&](int labelId, int controlId,
+                                     const wchar_t* expectedName) {
+    HWND label = GetDlgItem(editor, labelId);
+    HWND control = GetDlgItem(editor, controlId);
+    require(label != nullptr && control != nullptr,
+            "native labeled control pair is missing");
+    require(WinText(label) == expectedName,
+            "native control visible label text changed");
+    require(GetWindow(control, GW_HWNDPREV) == label,
+            "native control label is not adjacent in Z-order");
+    IAccessible* accessible = nullptr;
+    require(SUCCEEDED(AccessibleObjectFromWindow(
+                control, static_cast<DWORD>(OBJID_CLIENT), IID_IAccessible,
+                reinterpret_cast<void**>(&accessible))) &&
+                accessible != nullptr,
+            "native labeled control has no MSAA object");
+    require(accGetName(accessible, SelfChild()) == expectedName,
+            "NVDA/MSAA native control name disagrees with its visible label");
+    accessible->Release();
+
+    IUIAutomation* uia = CreateAutomation();
+    require(uia != nullptr, "UI Automation client could not be created");
+    IUIAutomationElement* element = nullptr;
+    require(SUCCEEDED(uia->ElementFromHandle(control, &element)) &&
+                element != nullptr,
+            "UI Automation could not retrieve native labeled control");
+    require(UiaName(element) == expectedName,
+            "Narrator/UIA native control name disagrees with its visible label");
+    element->Release();
+    uia->Release();
+  };
+
+  verifyNativeLabel(kModeLabelId, kModeComboId, L"Match Mode");
+
   // Jump to the first Bands page so the faders are visible, and flush the
   // page-description fallback announce that runs on tab change (190 ms timer).
   SelectPage(editor, 1);
   PumpFor(400);
+  verifyNativeLabel(kResolutionLabelId, kResolutionComboId,
+                    L"Correction Resolution");
 
   HWND fader = GetDlgItem(editor, kBandSliderFirstId);
   require(fader != nullptr && IsWindowVisible(fader) != FALSE,

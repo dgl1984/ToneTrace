@@ -14,6 +14,8 @@ versioning, and release dates use `YYYY-MM-DD`.
   for confirmation before exporting a manual curve. A learned match exports
   without the warning, while a completely flat unmatched instance retains the
   existing error.
+- Correction Resolution is now available through a labeled native control on
+  the Bands pages while remaining available through the host parameter view.
 
 ### Fixed
 
@@ -23,9 +25,13 @@ versioning, and release dates use `YYYY-MM-DD`.
 - Narrator no longer reports band values as percentages and now announces the
   updated dB value after Up or Down.
 - One- and six-dB keyboard adjustments preserve the existing fractional value.
-- Changing Correction Resolution while the editor is open now redraws the tab
-  strip and refreshes cached screen-reader labels when pages are added or
-  removed.
+- Band-page tabs now keep complete **Bands N-M** names at every resolution,
+  redraw immediately when Resolution changes, and refresh cached screen-reader
+  labels at the same time.
+- Nearby high-resolution bands no longer share the same rounded frequency
+  label.
+- Match Mode now has a visible native label, and Bands pages use the lower area
+  previously reserved for hidden Match-page controls.
 - Emergency Clip Guard now appears immediately after Correction Gain, with its
   visible label aligned to the correct value field and keyboard position.
 

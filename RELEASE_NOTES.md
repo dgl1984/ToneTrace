@@ -13,8 +13,13 @@ value, using NVDA, or using Narrator.
 - One- and six-dB keyboard adjustments preserve an existing fractional value.
 - Narrator no longer substitutes percentages and now announces changes made
   with Up or Down.
-- Band-page tab labels refresh immediately when Correction Resolution adds or
-  removes pages.
+- Correction Resolution can now be changed from a labeled control on the Bands
+  pages as well as through the host's parameter view.
+- Band-page tabs keep complete names such as **Bands 61-70** at every
+  resolution, refresh immediately when the band count changes, and keep nearby
+  center frequencies distinguishable.
+- **Match Mode** now has a visible label, and the Bands pages use the space that
+  was previously reserved for hidden Match-page controls.
 - **Emergency Clip Guard** now appears immediately after **Correction Gain** in
   the visible layout and keyboard order.
 - You can now export an impulse response from a curve created with the band

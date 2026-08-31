@@ -235,7 +235,7 @@ There is one deliberate limitation: the raw recordings are not stored in the pro
 
 ## 7. Main controls
 
-The Windows Match page keeps the controls used most often in front of you: Match Mode, Correction Strength, Maximum Correction, Correction Gain, Q / Sharpness, the low/high correction range, and Emergency Clip Guard. Less frequently changed global options—including **Full Correction Range**, **Correction Resolution**, tone-notification settings, Bypass, and the Reset workflow—remain available through the host's generic parameter view.
+The Windows Match page keeps the controls used most often in front of you: Match Mode, Correction Strength, Maximum Correction, Correction Gain, Q / Sharpness, the low/high correction range, and Emergency Clip Guard. **Correction Resolution** has its own labeled control on every Bands page. It also remains available through the host's generic parameter view, along with less frequently changed global options such as **Full Correction Range**, tone-notification settings, Bypass, and the Reset workflow.
 
 When you type a number into one of the Match-page value boxes, press **Enter**
 to apply it immediately, or press **Tab** to apply it and move to the next
@@ -280,7 +280,7 @@ You can change Correction Resolution **after a match has already been calculated
 
 Conversely, lowering Correction Resolution does **not** automatically smooth the learned match. It gives you fewer, broader-spaced points for manual editing. If the automatic correction itself sounds too detailed or ringy, use **Correction Q / Sharpness**, try another Match Mode, or improve the source comparison rather than reducing the band count and expecting the learned curve to change.
 
-On Windows, Tone Trace prefers no more than **10 bands per page**. Exact multiples therefore produce predictable pages such as 1–10, 11–20, and 21–30. If the total would leave a tiny final page, Tone Trace redistributes the bands as evenly as possible instead. For example, 31 bands becomes four pages of 8, 8, 8, and 7 rather than 10, 10, 10, and 1.
+On Windows, Tone Trace prefers no more than **10 bands per page**. Exact multiples therefore produce predictable tabs such as **Bands 1-10**, **Bands 11-20**, and **Bands 21-30**. Every tab keeps the **Bands** prefix, even when enough pages are present to require the tab strip's scroll arrows. If the total would leave a tiny final page, Tone Trace redistributes the bands as evenly as possible instead. For example, 31 bands becomes four pages of 8, 8, 8, and 7 rather than 10, 10, 10, and 1.
 
 ### Correction Range Low / High
 
@@ -342,7 +342,7 @@ The read-only text box containing the natural-language curve summary has the
 native accessible label **Curve Description**. Its displayed text is the value,
 not the control name.
 
-The host's generic parameter view exposes the global workflow, matching controls, safety controls, and live status. The native editor additionally provides the trace-band editor, curve descriptions, and Import/Export commands.
+The host's generic parameter view exposes the global workflow, matching controls, safety controls, and live status. Correction Resolution is deliberately available there and in the native Bands pages. The native editor additionally provides the trace-band editor, curve descriptions, and Import/Export commands.
 
 ### Reading the Match graph
 
@@ -380,7 +380,9 @@ a match exists, those controls become trims around the learned correction.
 
 The displayed value is the **final tonal correction** at that band after Maximum Correction, Q / Sharpness, Correction Strength, and any manual trim. **Correction Gain** remains a separate global level trim and is not folded into every band value.
 
-Band pages use a preferred maximum of 10 bands each and are balanced when necessary to prevent a nearly empty last tab. The default 30-band resolution is therefore three pages: **1–10**, **11–20**, and **21–30**. A 60-band trace uses six predictable 10-band pages, while totals such as 31 are redistributed rather than leaving a one-band final page. Changing Correction Resolution while the editor is open rebuilds both the pages and their visible and accessible tab labels.
+Band pages use a preferred maximum of 10 bands each and are balanced when necessary to prevent a nearly empty last tab. The default 30-band resolution is therefore three pages: **Bands 1-10**, **Bands 11-20**, and **Bands 21-30**. A 60-band trace uses six predictable 10-band pages, while totals such as 31 are redistributed rather than leaving a one-band final page. Changing Correction Resolution through either the native Bands-page control or the host parameter view rebuilds the pages and their visible and accessible tab labels immediately.
+
+Each band keeps the same frequency name visually and through screen readers. If two nearby centers would round to the same short kHz label, Tone Trace shows the extra precision needed to distinguish them rather than presenting two identically named controls.
 
 ### Trace Curve mode
 

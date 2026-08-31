@@ -59,8 +59,9 @@ Canvas interactions:
 | Curve description box | READONLY multiline EDIT | Natural-language description of all curves; sole non-visual curve reading |
 | Trace/readout box | READONLY EDIT; wraps visually on band pages | Exact Hz/dB on Match; concise band-page guidance and focused-band detail |
 | Capture Reference / Learn Target / Correct / Freeze | BUTTONs | Workflow steps (mirror the CLAP WorkflowAction param); Learn Target saves the Reference first, then begins Target capture |
-| Mode | COMBOBOX (named options) | Voice default; Full Mix / Voice / Drums / Bass+Synth / Custom |
-| Range low / high, strength, resolution, correction ceiling, etc. | exact-value EDITs | Continuous params, committed on kill-focus |
+| Match Mode | labeled COMBOBOX (named options) | Voice default; Full Mix / Voice / Drums / Bass+Synth / Custom |
+| Correction Resolution | labeled COMBOBOX on Bands pages | 1–120 bands; mirrors the host parameter and rebuilds the editable pages |
+| Range low / high, strength, correction ceiling, etc. | exact-value EDITs | Continuous params, committed on kill-focus |
 | Phase / status | READONLY EDIT | "Capturing Reference", "Frozen", etc. |
 | Legend rows | per-curve STATIC+color swatch | Names each curve for tabbing |
 
@@ -76,8 +77,8 @@ Rules from the OptiLab study applied here:
 - The description box and readout announce via `NotifyWinEvent` on demand only.
 - Band pages use the full editor width and prefer at most 10 bands per page. A
   non-multiple is rebalanced so there is no nearly empty final tab. The native
-  tab control uses natural caption widths so its own scroll arrows never cover
-  a visible tab label.
+  tab control always uses complete **Bands N-M** captions and relies on its
+  native scroll arrows when all pages do not fit.
 - Each band is one dedicated `ToneTraceAccessibleFader` HWND with the same
   concise accessible name and a single tab stop. MSAA exposes the canonical dB
   value used by NVDA; UI Automation exposes that same unit-bearing string through
@@ -92,7 +93,14 @@ Rules from the OptiLab study applied here:
   to an integer first.
 - Rebuilding pages after a live Correction Resolution change redraws the native
   tab strip and emits standard reorder/name-change events so visible captions
-  and cached screen-reader tab labels stay synchronized.
+  and cached screen-reader tab labels stay synchronized. A change made in the
+  native combo keeps focus there; an external change made while a band is
+  focused restores the nearest corresponding band.
+- Band center labels use the normal concise frequency format until rounding
+  would give adjacent bands the same caption. Only that collision is expanded
+  to the precision needed to keep the visible and spoken band names distinct.
+- Bands pages reclaim the lower area used by Match-only controls, which keeps
+  faders practical at the editor's minimum size.
 - IR export accepts the same manual-only curve used by standalone graphic-EQ
   operation. With no learned match, a nonzero band or Correction Gain opens a
   standard Windows OK/Cancel warning whose title contains the complete decision

@@ -66,8 +66,11 @@ constexpr int kTraceId = 105;
 constexpr int kExportId = 106;
 constexpr int kImportId = 107;
 constexpr int kModeComboId = 200;
+constexpr int kModeLabelId = 201;
 constexpr int kDescriptionLabelId = 202;
 constexpr int kDescriptionEditId = 203;
+constexpr int kResolutionLabelId = 204;
+constexpr int kResolutionComboId = 205;
 constexpr int kEditFirstId = 300;
 constexpr int kTabControlId = 50;
 constexpr int kBandSliderFirstId = 2000;
@@ -497,12 +500,13 @@ class ToneTraceWin32Editor::Impl {
 
   RECT bandCanvasRect() const {
     const int margin = px(10);
-    const int strip = px(168);
     // Band-page help is the same concise accessible readout as before, but the
     // native edit is allowed to wrap visually instead of clipping its tail.
+    // Match-only controls are hidden on these pages, so do not reserve their
+    // 168 px lower strip and needlessly shorten every fader.
     RECT rect{margin, tabStripRect().bottom + margin + px(42) + margin,
               clientWidth() - margin,
-              clientHeight() - margin - strip};
+              clientHeight() - margin};
     return rect;
   }
 
@@ -528,6 +532,7 @@ class ToneTraceWin32Editor::Impl {
 
   bool createChildren();
   void buildModeCombo();
+  void buildResolutionCombo();
   void layoutChildren();
   void createTabControl();
   void rebuildTraceTabs();
@@ -544,7 +549,7 @@ class ToneTraceWin32Editor::Impl {
   void announceBandValue(int band);
   struct TracePage;
   void playPageSweep(const TracePage& page) const;
-  void showPageDescription(const TracePage& page);
+  void showPageDescription(const TracePage& page, bool announce);
   void neutralizeBand(int band);
   void adjustBandStep(int band, int step);
   void bandToExtreme(int band, bool maximum);
@@ -643,7 +648,10 @@ class ToneTraceWin32Editor::Impl {
   HWND readoutEdit_ = nullptr;
   HWND descriptionLabel_ = nullptr;
   HWND descriptionEdit_ = nullptr;
+  HWND modeLabel_ = nullptr;
   HWND modeCombo_ = nullptr;
+  HWND resolutionLabel_ = nullptr;
+  HWND resolutionCombo_ = nullptr;
   HWND traceButton_ = nullptr;
   HWND tooltip_ = nullptr;
   struct TracePage {
@@ -1012,7 +1020,7 @@ void ToneTraceWin32Editor::Impl::setSubclass(HWND control, WNDPROC proc) {
 
 bool ToneTraceWin32Editor::Impl::forwardTraceArrows(HWND control) const {
   if (control == nullptr || control == descriptionEdit_ ||
-      control == modeCombo_) {
+      control == modeCombo_ || control == resolutionCombo_) {
     return false;
   }
   for (HWND edit : editControls_) {
@@ -1286,8 +1294,8 @@ void ToneTraceWin32Editor::Impl::setTabOrder() {
   };
   // Desired tab order (first to last):
   //   Capture Reference, Learn Target, Correct Target, Freeze Correction,
-  //   Match Mode, Trace Curve, labeled edits, Status, Readout, Description,
-  //   Copy Curve Description.
+  //   Match Mode, Correction Resolution, Trace Curve, labeled edits, Status,
+  //   Readout, Description, Copy Curve Description.
   // The copy button sits directly after the box it copies, so a keyboard user
   // can read the description then copy it without hunting.
   // workflowButtons_ creation order is 0=Capture, 1=Learn, 2=Correct,
@@ -1314,7 +1322,10 @@ void ToneTraceWin32Editor::Impl::setTabOrder() {
     }
   }
   moveTop(traceButton_);
+  moveTop(resolutionCombo_);
+  moveTop(resolutionLabel_);
   moveTop(modeCombo_);
+  moveTop(modeLabel_);
   topWorkflow(3);  // Freeze
   topWorkflow(2);  // Correct
   topWorkflow(1);  // Learn
@@ -1361,7 +1372,10 @@ bool ToneTraceWin32Editor::Impl::recreateFonts() {
   apply(readoutEdit_, font_);
   apply(descriptionLabel_, smallFont_);
   apply(descriptionEdit_, font_);
+  apply(modeLabel_, smallFont_);
   apply(modeCombo_, font_);
+  apply(resolutionLabel_, smallFont_);
+  apply(resolutionCombo_, font_);
   apply(traceButton_, font_);
   for (HWND control : workflowButtons_) apply(control, font_);
   for (HWND control : editControls_) apply(control, font_);
@@ -1483,6 +1497,17 @@ bool ToneTraceWin32Editor::Impl::createChildren() {
   addControlTooltip(tooltip_, window_, GetDlgItem(window_, kImportId),
                     L"Import a Reference, Target, or correction model.");
 
+  modeLabel_ = CreateWindowExW(
+      WS_EX_TRANSPARENT, L"STATIC", L"Match Mode",
+      WS_CHILD | WS_VISIBLE | SS_CENTER | SS_NOPREFIX,
+      0, 0, 4, 4, window_,
+      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kModeLabelId)), instance,
+      nullptr);
+  if (modeLabel_ != nullptr) {
+    SendMessageW(modeLabel_, WM_SETFONT,
+                 reinterpret_cast<WPARAM>(smallFont_), FALSE);
+  }
+
   modeCombo_ = CreateWindowExW(
       0, L"COMBOBOX", L"",
       WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
@@ -1494,6 +1519,32 @@ bool ToneTraceWin32Editor::Impl::createChildren() {
                  FALSE);
     setSubclass(modeCombo_, &Impl::keyForwardProc);
     buildModeCombo();
+  }
+
+  resolutionLabel_ = CreateWindowExW(
+      WS_EX_TRANSPARENT, L"STATIC", L"Correction Resolution",
+      WS_CHILD | WS_VISIBLE | SS_CENTER | SS_NOPREFIX,
+      0, 0, 4, 4, window_,
+      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kResolutionLabelId)),
+      instance, nullptr);
+  if (resolutionLabel_ != nullptr) {
+    SendMessageW(resolutionLabel_, WM_SETFONT,
+                 reinterpret_cast<WPARAM>(smallFont_), FALSE);
+  }
+
+  resolutionCombo_ = CreateWindowExW(
+      0, L"COMBOBOX", L"",
+      WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+      0, 0, 4, 4, window_,
+      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kResolutionComboId)),
+      instance, nullptr);
+  if (resolutionCombo_ != nullptr) {
+    SendMessageW(resolutionCombo_, WM_SETFONT,
+                 reinterpret_cast<WPARAM>(font_), FALSE);
+    setSubclass(resolutionCombo_, &Impl::keyForwardProc);
+    buildResolutionCombo();
+    addControlTooltip(tooltip_, window_, resolutionCombo_,
+                      L"Choose how many editable bands appear on the Bands pages.");
   }
 
   traceButton_ = CreateWindowExW(
@@ -1625,6 +1676,34 @@ void ToneTraceWin32Editor::Impl::buildModeCombo() {
   }
 }
 
+void ToneTraceWin32Editor::Impl::buildResolutionCombo() {
+  if (resolutionCombo_ == nullptr) return;
+  SendMessageW(resolutionCombo_, CB_RESETCONTENT, 0, 0);
+  const auto& descriptors = tonetrace::parameterDescriptors();
+  for (const auto& descriptor : descriptors) {
+    if (descriptor.id != tonetrace::ParameterId::Resolution) continue;
+    const int minimum = static_cast<int>(std::lround(descriptor.minimum));
+    const int maximum = static_cast<int>(std::lround(descriptor.maximum));
+    for (int value = minimum; value <= maximum; ++value) {
+      std::wstring text;
+      if (params_ != nullptr && params_->value_to_text != nullptr) {
+        char buffer[CLAP_NAME_SIZE]{};
+        if (params_->value_to_text(
+                plugin_, static_cast<clap_id>(descriptor.id),
+                static_cast<double>(value), buffer, sizeof(buffer))) {
+          text = widen(buffer);
+        }
+      }
+      if (text.empty()) {
+        text = std::to_wstring(value) + (value == 1 ? L" band" : L" bands");
+      }
+      SendMessageW(resolutionCombo_, CB_ADDSTRING, 0,
+                   reinterpret_cast<LPARAM>(text.c_str()));
+    }
+    break;
+  }
+}
+
 void ToneTraceWin32Editor::Impl::createTabControl() {
   if (tabControl_ != nullptr) return;
   tabControl_ = CreateWindowExW(
@@ -1652,13 +1731,11 @@ void ToneTraceWin32Editor::Impl::insertTraceTabs() {
   // message explicitly so the stored label (and MSAA name) is the full text.
   SendMessageW(tabControl_, TCM_INSERTITEMW, 0,
                reinterpret_cast<LPARAM>(&item));
-  const bool compactLabels = tracePages_.size() >= 9;
   for (std::size_t index = 0; index < tracePages_.size(); ++index) {
     const TracePage& page = tracePages_[index];
-    // The full "Bands N-M, F-F Hz" range is announced in the readout when the
-    // page is selected. At very high resolutions the strip uses just N-M so
-    // all tabs remain readable without scroll arrows.
-    std::wstring label = compactLabels ? L"" : L"Bands ";
+    // Keep the complete visible and spoken name at every resolution. The
+    // native tab strip supplies scroll arrows when all full labels do not fit.
+    std::wstring label = L"Bands ";
     label += std::to_wstring(page.firstBand + 1) + L"-" +
              std::to_wstring(page.firstBand + page.bandCount);
     item.pszText = const_cast<wchar_t*>(label.c_str());
@@ -1746,6 +1823,8 @@ void ToneTraceWin32Editor::Impl::layoutChildren() {
   }
 
   const int comboY = bottom - px(88);
+  SetWindowPos(modeLabel_, nullptr, margin, comboY - px(32), px(220), px(30),
+               SWP_NOACTIVATE | SWP_NOZORDER);
   SetWindowPos(modeCombo_, nullptr, margin, comboY, px(220), px(220),
                SWP_NOACTIVATE | SWP_NOZORDER);
 
@@ -1782,18 +1861,34 @@ void ToneTraceWin32Editor::Impl::layoutChildren() {
                SWP_NOACTIVATE | SWP_NOZORDER);
 
   // Keep Trace Curve beside the always-visible readout rather than leaving a
-  // checkbox floating in the lower-right corner of band pages. BS_PUSHLIKE
-  // gives the toggle the same readable themed treatment as the other buttons.
+  // checkbox floating in the lower-right corner of band pages. On Bands pages,
+  // Correction Resolution shares this row so pointer and keyboard users can
+  // change the grid without leaving the editor for a host-specific parameter
+  // view. BS_PUSHLIKE gives the trace toggle the same readable themed treatment
+  // as the other buttons.
   const int readoutY = tabStrip.bottom + margin;
   const int traceWidth = px(126);
-  const int readoutRight = width - margin;
-  const int readoutWidth = std::max(
-      px(200), readoutRight - margin - px(8) - traceWidth);
+  const int controlGap = px(8);
+  const int resolutionWidth = px(150);
+  const int traceX = width - margin - traceWidth;
+  const int resolutionX = traceX - controlGap - resolutionWidth;
+  const int readoutRight = selectedPage_ > 0 ? resolutionX - controlGap
+                                              : traceX - controlGap;
+  const int readoutWidth = std::max(px(200), readoutRight - margin);
   const int readoutHeight = selectedPage_ > 0 ? px(42) : px(24);
   SetWindowPos(readoutEdit_, nullptr, margin, readoutY, readoutWidth,
                readoutHeight, SWP_NOACTIVATE | SWP_NOZORDER);
-  SetWindowPos(traceButton_, nullptr, margin + readoutWidth + px(8), readoutY,
-               traceWidth, px(24), SWP_NOACTIVATE | SWP_NOZORDER);
+  if (selectedPage_ > 0) {
+    SetWindowPos(resolutionLabel_, nullptr, resolutionX, readoutY,
+                 resolutionWidth, px(16), SWP_NOACTIVATE | SWP_NOZORDER);
+    SetWindowPos(resolutionCombo_, nullptr, resolutionX, readoutY + px(16),
+                 resolutionWidth, px(240), SWP_NOACTIVATE | SWP_NOZORDER);
+    SetWindowPos(traceButton_, nullptr, traceX, readoutY + px(9), traceWidth,
+                 px(24), SWP_NOACTIVATE | SWP_NOZORDER);
+  } else {
+    SetWindowPos(traceButton_, nullptr, traceX, readoutY, traceWidth, px(24),
+                 SWP_NOACTIVATE | SWP_NOZORDER);
+  }
 
   layoutBandSliders();
 }
@@ -2154,7 +2249,7 @@ void ToneTraceWin32Editor::Impl::refresh() {
 }
 
 void ToneTraceWin32Editor::Impl::refreshValues() {
-  if (modeCombo_ == nullptr) return;
+  if (modeCombo_ == nullptr || resolutionCombo_ == nullptr) return;
   const int workflowStep = static_cast<int>(std::lround(
       paramValue(tonetrace::ParameterId::WorkflowAction)));
   if (workflowStep != lastWorkflowStep_) {
@@ -2167,6 +2262,17 @@ void ToneTraceWin32Editor::Impl::refreshValues() {
       static_cast<int>(std::lround(paramValue(tonetrace::ParameterId::MatchMode)));
   if (SendMessageW(modeCombo_, CB_GETCURSEL, 0, 0) != modeValue) {
     SendMessageW(modeCombo_, CB_SETCURSEL, static_cast<WPARAM>(modeValue), 0);
+  }
+
+  const int resolutionValue = std::clamp(
+      static_cast<int>(std::lround(
+          paramValue(tonetrace::ParameterId::Resolution))),
+      1, 120);
+  const int resolutionSelection = resolutionValue - 1;
+  if (SendMessageW(resolutionCombo_, CB_GETCURSEL, 0, 0) !=
+      resolutionSelection) {
+    SendMessageW(resolutionCombo_, CB_SETCURSEL,
+                 static_cast<WPARAM>(resolutionSelection), 0);
   }
 
   for (std::size_t index = 0; index < editControls_.size(); ++index) {
@@ -2712,7 +2818,34 @@ void ToneTraceWin32Editor::Impl::playTraceTone() const {
 }
 
 std::wstring ToneTraceWin32Editor::Impl::bandFrequencyText(int band) const {
-  return formatFrequency(traceBandFrequency(band));
+  const double frequency = traceBandFrequency(band);
+  const std::wstring concise = formatFrequency(frequency);
+  const auto conciseAt = [this](int index) {
+    return formatFrequency(traceBandFrequency(index));
+  };
+  const int count = traceBandCount();
+  const bool duplicateBefore = band > 0 && conciseAt(band - 1) == concise;
+  const bool duplicateAfter = band + 1 < count && conciseAt(band + 1) == concise;
+  if (!duplicateBefore && !duplicateAfter) return concise;
+
+  // At very high resolutions two neighboring centers can round to the same
+  // concise kHz caption. Escalate only that collision to whole Hz, then to
+  // fractional Hz if an unusually narrow imported range still needs it.
+  const auto hzText = [](double value, int decimals) {
+    wchar_t buffer[32]{};
+    std::swprintf(buffer, std::size(buffer), decimals == 0 ? L"%.0f Hz" :
+                  decimals == 1 ? L"%.1f Hz" : L"%.2f Hz", value);
+    return std::wstring(buffer);
+  };
+  for (int decimals = 0; decimals <= 2; ++decimals) {
+    const std::wstring candidate = hzText(frequency, decimals);
+    const bool sameBefore =
+        band > 0 && hzText(traceBandFrequency(band - 1), decimals) == candidate;
+    const bool sameAfter = band + 1 < count &&
+        hzText(traceBandFrequency(band + 1), decimals) == candidate;
+    if (!sameBefore && !sameAfter) return candidate;
+  }
+  return hzText(frequency, 2);
 }
 
 double ToneTraceWin32Editor::Impl::matchDbAtBand(int band) const {
@@ -2792,7 +2925,8 @@ void ToneTraceWin32Editor::Impl::playPageSweep(const TracePage& page) const {
   playBandSweep_(context_, lowEdge, highEdge, page.bandCount, 1200.0);
 }
 
-void ToneTraceWin32Editor::Impl::showPageDescription(const TracePage& page) {
+void ToneTraceWin32Editor::Impl::showPageDescription(const TracePage& page,
+                                                      bool announce) {
   if (readoutEdit_ == nullptr) return;
   wchar_t buffer[256]{};
   std::swprintf(
@@ -2800,9 +2934,10 @@ void ToneTraceWin32Editor::Impl::showPageDescription(const TracePage& page) {
       L"Bands %d-%d, %s to %s. Tab bands; Up/Down 1 dB; "
       L"PageUp/PageDown 6 dB; Home/End limits; 0 sets 0 dB.",
       page.firstBand + 1, page.firstBand + page.bandCount,
-      formatFrequency(page.lowHz).c_str(), formatFrequency(page.highHz).c_str());
+      bandFrequencyText(page.firstBand).c_str(),
+      bandFrequencyText(page.firstBand + page.bandCount - 1).c_str());
   SetWindowTextW(readoutEdit_, buffer);
-  armTraceAnnounce();
+  if (announce) armTraceAnnounce();
 }
 
 void ToneTraceWin32Editor::Impl::correctionAt(double frequencyHz,
@@ -2899,6 +3034,23 @@ void ToneTraceWin32Editor::Impl::destroyTracePages() {
 void ToneTraceWin32Editor::Impl::rebuildTraceTabs() {
   const int resolution = traceBandCount();
   if (tabControl_ == nullptr) return;
+  const HWND focusedBefore = GetFocus();
+  const int focusedId = focusedBefore != nullptr ? GetDlgCtrlID(focusedBefore) : 0;
+  const int oldResolution = builtResolution_;
+  const bool restoreBandFocus =
+      focusedBefore != nullptr && IsChild(window_, focusedBefore) != FALSE &&
+      focusedId >= kBandSliderFirstId &&
+      focusedId < kBandSliderFirstId + std::max(1, oldResolution);
+  int restoredBand = -1;
+  if (restoreBandFocus) {
+    const int oldBand = focusedId - kBandSliderFirstId;
+    restoredBand = oldResolution > 1 && resolution > 1
+                       ? static_cast<int>(std::lround(
+                             static_cast<double>(oldBand) * (resolution - 1) /
+                             (oldResolution - 1)))
+                       : 0;
+    restoredBand = std::clamp(restoredBand, 0, resolution - 1);
+  }
   destroyTracePages();
   builtResolution_ = resolution;
 
@@ -2965,12 +3117,34 @@ void ToneTraceWin32Editor::Impl::rebuildTraceTabs() {
   }
 
   insertTraceTabs();
-  const int clamped = std::clamp(selectedPage_, 0, pageCount);
+  int clamped = std::clamp(selectedPage_, 0, pageCount);
+  if (restoredBand >= 0) {
+    for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
+      const TracePage& page = tracePages_[static_cast<std::size_t>(pageIndex)];
+      if (restoredBand >= page.firstBand &&
+          restoredBand < page.firstBand + page.bandCount) {
+        clamped = pageIndex + 1;
+        break;
+      }
+    }
+  }
   selectedPage_ = clamped;
   SendMessageW(tabControl_, TCM_SETCURSEL, static_cast<WPARAM>(clamped), 0);
   layoutBandSliders();
   showTracePage(clamped);
   stackCurrentPage();
+  refreshBandSliders();
+  if (clamped > 0 && static_cast<std::size_t>(clamped - 1) < tracePages_.size()) {
+    const TracePage& page = tracePages_[static_cast<std::size_t>(clamped - 1)];
+    showPageDescription(page, false);
+    if (restoredBand >= page.firstBand &&
+        restoredBand < page.firstBand + page.bandCount) {
+      const int offset = restoredBand - page.firstBand;
+      if (offset >= 0 && offset < static_cast<int>(page.edits.size())) {
+        SetFocus(page.edits[static_cast<std::size_t>(offset)]);
+      }
+    }
+  }
   InvalidateRect(window_, nullptr, FALSE);
 }
 
@@ -3009,7 +3183,10 @@ void ToneTraceWin32Editor::Impl::showTracePage(int page) {
       ShowWindow(control, visible ? SW_SHOW : SW_HIDE);
     }
   };
+  setVisible(modeLabel_, match);
   setVisible(modeCombo_, match);
+  setVisible(resolutionLabel_, !match);
+  setVisible(resolutionCombo_, !match);
   // The Trace checkbox stays on every page so the user can switch between
   // hearing band positions and editing band values from any tab.
   setVisible(traceButton_, true);
@@ -3046,6 +3223,14 @@ void ToneTraceWin32Editor::Impl::stackCurrentPage() {
     SetWindowPos(page.edits[index], HWND_TOP, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
   }
+  // Bands-page tab order follows the visible layout: page selector,
+  // Correction Resolution, Trace Curve, then the individual band faders.
+  SetWindowPos(traceButton_, HWND_TOP, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+  SetWindowPos(resolutionCombo_, HWND_TOP, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+  SetWindowPos(resolutionLabel_, HWND_TOP, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
   if (tabControl_ != nullptr) {
     SetWindowPos(tabControl_, HWND_TOP, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -3070,7 +3255,7 @@ void ToneTraceWin32Editor::Impl::onTabChanged() {
       lastSweepTicks_ = now;
       playPageSweep(tracePage);
     }
-    showPageDescription(tracePage);
+    showPageDescription(tracePage, true);
   }
   InvalidateRect(window_, nullptr, FALSE);
 }
@@ -3211,6 +3396,23 @@ void ToneTraceWin32Editor::Impl::onCommand(int id, int notificationCode,
       setParam_(context_, static_cast<std::uint32_t>(
                               tonetrace::ParameterId::MatchMode),
                 static_cast<double>(selection));
+    }
+    return;
+  }
+  if (id == kResolutionComboId) {
+    if (notificationCode != CBN_SELCHANGE) return;
+    const LRESULT selection =
+        SendMessageW(resolutionCombo_, CB_GETCURSEL, 0, 0);
+    if (selection != CB_ERR) {
+      setParam_(context_, static_cast<std::uint32_t>(
+                              tonetrace::ParameterId::Resolution),
+                static_cast<double>(selection + 1));
+      // The native editor parameter path updates the plug-in synchronously.
+      // Rebuild here instead of waiting for the 33 ms timer so mouse and
+      // keyboard users see the new page labels before focus leaves the combo.
+      if (traceBandCount() != builtResolution_) rebuildTraceTabs();
+      refreshValues();
+      SetFocus(resolutionCombo_);
     }
     return;
   }
