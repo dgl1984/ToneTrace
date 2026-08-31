@@ -14,11 +14,12 @@ jobs:
       - name: Reconstruct verified patches
         shell: bash
         run: |
-          # lang_00 was staged with one accidental trailing space; trim it back
-          # to the exact locally tested 7000-byte chunk before verification.
-          truncate -s 7000 .tmp_feedback/lang_00
+          # lang_00 was staged with one accidental trailing space. Repair only
+          # a temporary copy so the checkout stays clean before branch switch.
+          cp .tmp_feedback/lang_00 /tmp/lang_00
+          truncate -s 7000 /tmp/lang_00
           cat .tmp_feedback/wf_* > /tmp/workflow.patch
-          cat .tmp_feedback/lang_* > /tmp/language.patch
+          cat /tmp/lang_00 .tmp_feedback/lang_01 .tmp_feedback/lang_02 .tmp_feedback/lang_03 .tmp_feedback/lang_04 > /tmp/language.patch
           echo '1f565b94750ff867aa002a5ad02aa482d3337b11c82950c0b10386e894725677  /tmp/workflow.patch' | sha256sum -c -
           echo 'ba8067ba1108519b53294fbd91088c72ed7d24dd1c4c0157a0d79d24c2954e2f  /tmp/language.patch' | sha256sum -c -
       - name: Apply on clean candidate head
