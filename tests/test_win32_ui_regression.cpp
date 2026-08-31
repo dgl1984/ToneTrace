@@ -637,7 +637,16 @@ void verifyFlatExportError(HWND editor) {
           return TRUE;
         },
         reinterpret_cast<LPARAM>(&message));
-    PostMessageW(dialog, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED), 0);
+    HWND ok = nullptr;
+    for (int attempt = 0; attempt < 100 && ok == nullptr; ++attempt) {
+      ok = GetDlgItem(dialog, IDOK);
+      if (ok == nullptr) Sleep(10);
+    }
+    if (ok != nullptr) {
+      PostMessageW(ok, BM_CLICK, 0, 0);
+    } else {
+      PostMessageW(dialog, WM_CLOSE, 0, 0);
+    }
   });
 
   SendMessageW(editor, WM_COMMAND, MAKEWPARAM(kExportIrMenuId, 0), 0);
