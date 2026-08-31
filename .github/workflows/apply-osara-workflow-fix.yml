@@ -1,0 +1,82 @@
+name: Apply OSARA workflow fix
+
+on:
+  push:
+    branches:
+      - fix/osara-workflow-step-work
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: fix/osara-workflow-step-work
+
+      - name: Apply narrow source and regression changes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: Path, old: str, new: str, label: str) -> None:
+              text = path.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one match, found {count}")
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          clap = Path("plugins/clap/tonetrace_clap.cpp")
+          tests = Path("tests/test_clap.cpp")
+
+          replace_once(
+              clap,
+              '''    if (descriptor.stepped) info->flags |= CLAP_PARAM_IS_STEPPED;\n    if (descriptor.readOnly) info->flags |= CLAP_PARAM_IS_READONLY;\n''',
+              '''    if (descriptor.stepped) info->flags |= CLAP_PARAM_IS_STEPPED;\n    if (descriptor.id == tonetrace::ParameterId::WorkflowAction ||\n        descriptor.id == tonetrace::ParameterId::MatchMode) {\n      info->flags |= CLAP_PARAM_IS_ENUM;\n    }\n    if (descriptor.readOnly) info->flags |= CLAP_PARAM_IS_READONLY;\n''',
+              "CLAP enum flags")
+
+          replace_once(
+              clap,
+              '''    const auto parameter = descriptors[index].id;\n    if (parameter == tonetrace::ParameterId::WorkflowAction) {\n      std::snprintf(output, capacity, "%s", workflowText(static_cast<int>(std::lround(value))));\n    } else if (parameter == tonetrace::ParameterId::MatchMode) {\n      std::snprintf(output, capacity, "%s", modeText(static_cast<int>(std::lround(value))));\n    } else if (parameter == tonetrace::ParameterId::LastCommand) {\n      std::snprintf(output, capacity, "%s", workflowText(static_cast<int>(std::lround(value))));\n    } else if (parameter == tonetrace::ParameterId::Status) {\n      std::snprintf(output, capacity, "%s", statusText(static_cast<int>(std::lround(value))));\n    } else if (parameter == tonetrace::ParameterId::Confidence) {\n      const int level = static_cast<int>(std::lround(value * 3.0));\n      const auto* instance = self(plugin);\n      const bool acceptedAudio = instance != nullptr &&\n          instance->value(tonetrace::ParameterId::CaptureSeconds) > 0.0;\n      std::snprintf(output, capacity, "%s",\n                    level >= 3 ? "High" : level == 2 ? "Medium" :\n                    level == 1 ? "Low; usable with caution" :\n                    acceptedAudio ? "Not yet confident" : "No valid audio");\n    } else if (parameter == tonetrace::ParameterId::ToneLevelDb &&\n               value <= -59.5) {\n      std::snprintf(output, capacity, "%s", "Off");\n    } else if (parameter == tonetrace::ParameterId::CompleteMatch ||\n               parameter == tonetrace::ParameterId::ToneNotifications ||\n               parameter == tonetrace::ParameterId::Bypass) {\n      std::snprintf(output, capacity, "%s", value >= 0.5 ? "On" : "Off");\n    } else if (parameter == tonetrace::ParameterId::Resolution) {\n      std::snprintf(output, capacity, "%.0f %s", value,\n                    std::lround(value) == 1 ? "band" : "bands");\n    } else if (descriptors[index].stepped) {\n      std::snprintf(output, capacity, "%.0f %s", value, descriptors[index].unit);\n    } else {\n      std::snprintf(output, capacity, "%.3f %s", value, descriptors[index].unit);\n    }\n''',
+              '''    const auto parameter = descriptors[index].id;\n    // A stepped parameter's public text must describe the same integer value\n    // that applyParameter() will accept. In particular, do not use rounding\n    // here while the CLAP stepped-value contract uses integer-cast/truncation.\n    // Hosts such as REAPER/OSARA walk a generic control until value_to_text()\n    // changes, so a rounded label at 1.5 can otherwise claim Workflow Step 2\n    // while the plug-in correctly stores Step 1.\n    const double effectiveValue = descriptors[index].stepped\n                                      ? clampedValue(descriptors[index], value)\n                                      : value;\n    if (parameter == tonetrace::ParameterId::WorkflowAction) {\n      std::snprintf(output, capacity, "%s", workflowText(static_cast<int>(effectiveValue)));\n    } else if (parameter == tonetrace::ParameterId::MatchMode) {\n      std::snprintf(output, capacity, "%s", modeText(static_cast<int>(effectiveValue)));\n    } else if (parameter == tonetrace::ParameterId::LastCommand) {\n      std::snprintf(output, capacity, "%s", workflowText(static_cast<int>(effectiveValue)));\n    } else if (parameter == tonetrace::ParameterId::Status) {\n      std::snprintf(output, capacity, "%s", statusText(static_cast<int>(effectiveValue)));\n    } else if (parameter == tonetrace::ParameterId::Confidence) {\n      const int level = static_cast<int>(std::lround(value * 3.0));\n      const auto* instance = self(plugin);\n      const bool acceptedAudio = instance != nullptr &&\n          instance->value(tonetrace::ParameterId::CaptureSeconds) > 0.0;\n      std::snprintf(output, capacity, "%s",\n                    level >= 3 ? "High" : level == 2 ? "Medium" :\n                    level == 1 ? "Low; usable with caution" :\n                    acceptedAudio ? "Not yet confident" : "No valid audio");\n    } else if (parameter == tonetrace::ParameterId::ToneLevelDb &&\n               value <= -59.5) {\n      std::snprintf(output, capacity, "%s", "Off");\n    } else if (parameter == tonetrace::ParameterId::CompleteMatch ||\n               parameter == tonetrace::ParameterId::ToneNotifications ||\n               parameter == tonetrace::ParameterId::Bypass) {\n      std::snprintf(output, capacity, "%s", effectiveValue >= 0.5 ? "On" : "Off");\n    } else if (parameter == tonetrace::ParameterId::Resolution) {\n      std::snprintf(output, capacity, "%.0f %s", effectiveValue,\n                    static_cast<int>(effectiveValue) == 1 ? "band" : "bands");\n    } else if (descriptors[index].stepped) {\n      std::snprintf(output, capacity, "%.0f %s", effectiveValue, descriptors[index].unit);\n    } else {\n      std::snprintf(output, capacity, "%.3f %s", value, descriptors[index].unit);\n    }\n''',
+              "stepped value_to_text alignment")
+
+          replace_once(
+              tests,
+              '''    require(orderedIds == expectedOrder,\n            "generic parameter order no longer matches the frozen accessible design");\n    char accessibleText[128]{};\n''',
+              '''    require(orderedIds == expectedOrder,\n            "generic parameter order no longer matches the frozen accessible design");\n    const auto parameterFlags = [&](clap_id id) -> clap_param_info_flags {\n      for (uint32_t index = 0; index < instance.params->count(instance.plugin);\n           ++index) {\n        clap_param_info_t info{};\n        require(instance.params->get_info(instance.plugin, index, &info),\n                "parameter descriptor query failed while checking flags");\n        if (info.id == id) return info.flags;\n      }\n      require(false, "parameter id missing while checking flags");\n      return 0;\n    };\n    const auto workflowFlags = parameterFlags(kWorkflow);\n    const auto matchModeFlags = parameterFlags(kMatchMode);\n    const auto resolutionFlags = parameterFlags(kResolution);\n    require((workflowFlags & CLAP_PARAM_IS_STEPPED) != 0 &&\n                (workflowFlags & CLAP_PARAM_IS_ENUM) != 0,\n            "Workflow Step is not exposed as a stepped CLAP enum");\n    require((matchModeFlags & CLAP_PARAM_IS_STEPPED) != 0 &&\n                (matchModeFlags & CLAP_PARAM_IS_ENUM) != 0,\n            "Match Mode is not exposed as a stepped CLAP enum");\n    require((resolutionFlags & CLAP_PARAM_IS_STEPPED) != 0 &&\n                (resolutionFlags & CLAP_PARAM_IS_ENUM) == 0,\n            "Correction Resolution was incorrectly exposed as a named enum");\n    char accessibleText[128]{};\n''',
+              "parameter enum regression checks")
+
+          replace_once(
+              tests,
+              '''    require(instance.params->value_to_text(instance.plugin, kWorkflow, 2.0,\n                                           accessibleText,\n                                           sizeof(accessibleText)) &&\n                std::strcmp(accessibleText,\n                            "Save Reference and Learn Target") == 0 &&\n                instance.params->text_to_value(instance.plugin, kWorkflow,\n                                               "Capture Reference",\n                                               &parsedValue) &&\n                parsedValue == 1.0,\n            "workflow labels are not round-trippable through the generic host interface");\n''',
+              '''    require(instance.params->value_to_text(instance.plugin, kWorkflow, 2.0,\n                                           accessibleText,\n                                           sizeof(accessibleText)) &&\n                std::strcmp(accessibleText,\n                            "Save Reference and Learn Target") == 0 &&\n                instance.params->text_to_value(instance.plugin, kWorkflow,\n                                               "Capture Reference",\n                                               &parsedValue) &&\n                parsedValue == 1.0,\n            "workflow labels are not round-trippable through the generic host interface");\n    const auto formattedValue = [&](clap_id id, double value) {\n      char text[128]{};\n      require(instance.params->value_to_text(instance.plugin, id, value, text,\n                                             sizeof(text)),\n              "generic parameter value_to_text failed");\n      return std::string(text);\n    };\n    require(formattedValue(kWorkflow, 1.1) == "Capture Reference" &&\n                formattedValue(kWorkflow, 1.5) == "Capture Reference" &&\n                formattedValue(kWorkflow, 1.999) == "Capture Reference" &&\n                formattedValue(kWorkflow, 1.999999999) ==\n                    "Save Reference and Learn Target" &&\n                formattedValue(kWorkflow, 2.0) ==\n                    "Save Reference and Learn Target",\n            "Workflow Step text does not follow CLAP stepped-value semantics");\n    require(formattedValue(kMatchMode, 1.5) == "Voice" &&\n                formattedValue(kMatchMode, 2.0) == "Drums",\n            "Match Mode text does not follow CLAP stepped-value semantics");\n    require(formattedValue(kResolution, 1.5) == "1 band" &&\n                formattedValue(kResolution, 1.999) == "1 band" &&\n                formattedValue(kResolution, 2.0) == "2 bands",\n            "Correction Resolution text disagrees with the accepted stepped value");\n    require(formattedValue(kToneNotifications, 0.5) == "Off" &&\n                formattedValue(kToneNotifications, 0.999999999) == "On",\n            "toggle text disagrees with the accepted stepped value");\n\n    const std::string workflowAtOne = formattedValue(kWorkflow, 1.0);\n    double osaraWorkflowValue = 1.0;\n    constexpr double osaraWorkflowStep = 7.0 / 1000.0;\n    for (int iteration = 0;\n         iteration < 1000 &&\n         formattedValue(kWorkflow, osaraWorkflowValue) == workflowAtOne;\n         ++iteration) {\n      osaraWorkflowValue += osaraWorkflowStep;\n    }\n    require(osaraWorkflowValue >= 2.0 && osaraWorkflowValue < 2.01 &&\n                formattedValue(kWorkflow, osaraWorkflowValue) ==\n                    "Save Reference and Learn Target",\n            "OSARA-style Workflow Step walk reached the next label before integer step 2");\n''',
+              "OSARA stepped-format regression checks")
+
+          replace_once(
+              tests,
+              '''    // Exercise the same host parameter-flush path used by REAPER's generic\n    // parameter surface / OSARA: advance from Capture Reference to Learn\n    // Target without relying on an audio-process parameter event. This is the\n    // exact transition that regressed when host synchronization was coupled to\n    // unrelated correction rebuilds.\n    flushParameter(instance.plugin, kWorkflow, 2.0);\n''',
+              '''    // Exercise the same host parameter-flush path used by REAPER's generic\n    // parameter surface / OSARA: advance from Capture Reference to Learn\n    // Target using the value reached by OSARA's generic 1/1000-range walk,\n    // rather than injecting a perfect integer that hides formatting/step bugs.\n    flushParameter(instance.plugin, kWorkflow, osaraWorkflowValue);\n''',
+              "OSARA workflow integration value")
+          PY
+
+      - name: Configure
+        run: cmake --preset linux-release
+      - name: Build
+        run: cmake --build --preset linux-release --parallel
+      - name: Test
+        run: ctest --preset linux-release
+
+      - name: Commit repaired source
+        shell: bash
+        run: |
+          rm .github/workflows/apply-osara-workflow-fix.yml
+          git config user.name "Tone Trace repair bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add plugins/clap/tonetrace_clap.cpp tests/test_clap.cpp .github/workflows/apply-osara-workflow-fix.yml
+          git commit -m "Fix OSARA workflow step navigation"
+          git push origin HEAD:fix/osara-workflow-step-work
