@@ -8,11 +8,10 @@
 
 namespace tonetrace {
 
-// Natural-language descriptions of a Tone Trace profile. The GUI renders the
-// curves visually and offers this text to screen-reader users; the text is a
-// pure function of the snapshot so it can be unit-tested and stays in sync
-// with what is drawn.
-
+// Deterministic natural-language overview of a Tone Trace profile. This is the
+// same product information for every user: the GUI renders the exact graph and
+// readout, while this overview names the broad tonal geometry without trying to
+// reproduce every graph point in prose.
 struct CurveDescription {
   std::string reference;
   std::string target;
@@ -27,35 +26,40 @@ struct CurveBand {
 };
 
 // Fixed descriptive bands. Sub/bass/low-mid/mid/presence/air/brilliance. These
-// are for wording, not for DSP; the engine's own analysis remains authoritative.
+// are wording regions only; they do not change analysis or processing.
 [[nodiscard]] const std::vector<CurveBand>& curveBands();
 
-// Mean level (dB) of a capture over one band, relative to the capture's own
-// overall mean level in the same band set. Positive means the band is louder
-// than the curve's own average shape.
+// Confidence-weighted in-band mean of the already level-normalised capture
+// points. No second whole-curve mean or median is subtracted here.
 [[nodiscard]] double bandLevelDb(const SpectrumCapture& capture,
                                  const CurveBand& band);
 
-// Band level of the correction model's gain at a band's geometric center.
+// Legacy helper retained for API stability in this round. The description
+// parser itself does not use it; applied correction prose comes from
+// evaluateCorrectionAt(...).tonalDb.
 [[nodiscard]] double correctionBandDb(const CorrectionModel& model,
                                       const CurveBand& band);
 
-// One or two sentences describing one capture's tone shape.
+// Broad tonal shape of one captured curve (shelf, peak/dip, tilt, smile/frown,
+// or close to flat), using the seven fixed descriptive regions.
 [[nodiscard]] std::string describeCapture(const SpectrumCapture& capture);
 
-// Describes what the correction does to the target, band by band, reporting
-// the applied (ceiling-clamped) gains and calling out when the calculated
-// correction was limited by Tone Trace's Maximum Correction setting.
+// Broad shape of the correction actually applied by the renderer. Strength,
+// Q/sharpness, manual trims, range and Nyquist are reflected through
+// evaluateCorrectionAt(...).tonalDb; global Correction Gain is intentionally
+// excluded. Maximum Correction is reported separately only when uncapped model
+// nodes exceed the pre-Strength/Q/trim node ceiling.
 [[nodiscard]] std::string describeCorrection(
     const CorrectionModel& model, double ceilingDb,
-    double rangeLowHz = 20.0, double rangeHighHz = 20000.0);
+    const IrRenderSettings& settings);
 
-// Full description of a snapshot. An empty snapshot yields a short Ready
-// message rather than a failure.
+// Full description of a snapshot. Summary compares Target directly with
+// Reference when both captures exist. An empty snapshot uses the engine-owned
+// universal empty copy and points users to the still-available Bands pages.
 [[nodiscard]] CurveDescription describeToneTrace(
     const ProfileSnapshot& snapshot);
 
-// Convenience: concatenates the sections with headings and blank lines.
+// Concatenates Summary / Reference / Target / Correction with blank lines.
 [[nodiscard]] std::string curveDescriptionText(const ProfileSnapshot& snapshot);
 
 }  // namespace tonetrace

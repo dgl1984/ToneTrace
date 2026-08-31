@@ -670,121 +670,261 @@ void testInMemorySerialization() {
   std::cout << "in-memory capture and model serialization: passed\n";
 }
 
-void testCurveDescription() {
-  tonetrace::ProfileSnapshot snapshot;
-  require(snapshot.reference.points.empty() && snapshot.target.points.empty(),
-          "Empty snapshot should start with no points");
-  auto text = tonetrace::curveDescriptionText(snapshot);
-  require(text.find("No captures yet") != std::string::npos,
-          "Empty snapshot should say no captures yet");
-
+tonetrace::SpectrumCapture regionalCapture(const std::array<double, 7>& levels) {
   tonetrace::SpectrumCapture capture;
   capture.sampleRate = 48000;
   capture.fftSize = 4096;
   capture.acceptedFrames = 100;
-  capture.confidence = 0.9;
-  // Bass-heavy curve: strong 60-250 Hz, quiet 6-20 kHz.
-  for (double hz = 20.0; hz <= 20000.0; hz *= 1.02) {
-    double level = 0.0;
-    if (hz >= 60.0 && hz < 250.0) {
-      level = 6.0;
-    } else if (hz >= 6000.0) {
-      level = -6.0;
+  capture.confidence = 0.95;
+  const auto& bands = tonetrace::curveBands();
+  for (double hz = 20.0; hz < 20000.0; hz *= 1.02) {
+    std::size_t bandIndex = bands.size() - 1;
+    for (std::size_t index = 0; index < bands.size(); ++index) {
+      if (hz >= bands[index].lowHz && hz < bands[index].highHz) {
+        bandIndex = index;
+        break;
+      }
     }
-    capture.points.push_back(
-        {hz, level, 0.95, 1.0});
+    capture.points.push_back({hz, levels[bandIndex], 0.95, 1.0});
   }
-  snapshot.reference = capture;
-  snapshot.target = capture;
+  return capture;
+}
 
-  tonetrace::CorrectionModel model;
-  model.nodes = {{100.0, 3.0, 1.0}, {2000.0, -2.0, 1.0}, {8000.0, -4.0, 1.0}};
-  snapshot.uncappedModel = model;
+bool containsText(const std::string& text, const std::string& needle) {
+  return text.find(needle) != std::string::npos;
+}
 
-  const auto description = tonetrace::describeToneTrace(snapshot);
-  require(description.reference.find("bass") != std::string::npos,
-          "Reference description should mention the bass region");
-  require(description.reference.find("air") != std::string::npos,
-          "Reference description should mention the air region");
-  require(description.correction.find("boost") != std::string::npos,
-          "Correction should mention a boost");
-  require(description.correction.find("cut") != std::string::npos,
-          "Correction should mention a cut");
-  const auto full = tonetrace::curveDescriptionText(snapshot);
-  require(full.find("Reference") != std::string::npos &&
-              full.find("Target") != std::string::npos &&
-              full.find("Correction") != std::string::npos,
-          "Full text should have all three sections");
-  std::cout << "curve description generator: passed\n";
+void testCurveDescription() {
+  tonetrace::ProfileSnapshot snapshot;
+  const std::string empty = tonetrace::curveDescriptionText(snapshot);
+  const std::string expectedEmpty =
+      "Tone Trace summary\n"
+      "No learned match yet. Capture Reference to begin. Manual band EQ remains available on the Bands pages.\n\n"
+      "Reference\nNo capture yet.\n\n"
+      "Target\nNo capture yet.\n\n"
+      "Correction\nNo correction has been computed yet.\n";
+  require(empty == expectedEmpty,
+          "Empty Curve Description no longer has one engine-owned document");
+
+  const auto highCut = regionalCapture({0, 0, 0, 0, 0, -6, -6});
+  const std::string highCutText = tonetrace::describeCapture(highCut);
+  require(containsText(highCutText, "quieter above 6 kHz") &&
+              !containsText(highCutText, "Most prominent") &&
+              !containsText(highCutText, "bass") &&
+              !containsText(highCutText, "60-250"),
+          "High-frequency cut invented a complementary bass peak or old wording: " +
+              highCutText);
+
+  const auto lowShelf = regionalCapture({6, 6, 6, 6, 0, 0, 0});
+  const std::string lowShelfText = tonetrace::describeCapture(lowShelf);
+  require(containsText(lowShelfText, "louder below 2 kHz") &&
+              !containsText(lowShelfText, "Most prominent"),
+          "Broad four-region low shelf was not described as one shelf: " +
+              lowShelfText);
+
+  const auto highShelf = regionalCapture({0, 0, 0, 6, 6, 6, 6});
+  const std::string highShelfText = tonetrace::describeCapture(highShelf);
+  require(containsText(highShelfText, "louder above 500 Hz"),
+          "Broad high shelf was not described as one high feature: " +
+              highShelfText);
+
+  const auto midBump = regionalCapture({0, 0, 6, 6, 6, 0, 0});
+  const std::string midBumpText = tonetrace::describeCapture(midBump);
+  require(containsText(midBumpText, "peak") &&
+              containsText(midBumpText, "low mid") &&
+              !containsText(midBumpText, "below 250 Hz"),
+          "Broad mid bump was misclassified: " + midBumpText);
+
+  const auto presenceBell = regionalCapture({0, 0, 0, 0, 6, 0, 0});
+  const std::string bellText = tonetrace::describeCapture(presenceBell);
+  require(containsText(bellText, "6 dB peak") &&
+              containsText(bellText, "presence (2 to 6 kHz)") &&
+              !containsText(bellText, "tilts"),
+          "Presence bell description is not a local peak: " + bellText);
+
+  const auto notch = regionalCapture({0, 0, 0, -6, 0, 0, 0});
+  const std::string notchText = tonetrace::describeCapture(notch);
+  require(containsText(notchText, "6 dB dip") &&
+              containsText(notchText, "mid (500 Hz to 2 kHz)") &&
+              !containsText(notchText, "smile"),
+          "Mid notch description is not a local dip: " + notchText);
+
+  std::array<double, 7> tiltLevels{};
+  const auto& bands = tonetrace::curveBands();
+  const double firstX = std::log(std::sqrt(bands.front().lowHz * bands.front().highHz));
+  const double lastX = std::log(std::sqrt(bands.back().lowHz * bands.back().highHz));
+  for (std::size_t index = 0; index < bands.size(); ++index) {
+    const double x = std::log(std::sqrt(bands[index].lowHz * bands[index].highHz));
+    const double fraction = (x - firstX) / (lastX - firstX);
+    tiltLevels[index] = 6.0 - 12.0 * fraction;
+  }
+  const std::string tiltText =
+      tonetrace::describeCapture(regionalCapture(tiltLevels));
+  require(containsText(tiltText, "tilts down") &&
+              !containsText(tiltText, "peak") && !containsText(tiltText, "dip"),
+          "Smooth slope was not classified as one tilt: " + tiltText);
+
+  const std::string stepText = tonetrace::describeCapture(
+      regionalCapture({6, 6, 6, 6, -6, -6, -6}));
+  require(containsText(stepText, "below 2 kHz") &&
+              !containsText(stepText, "tilts"),
+          "Hard step was incorrectly softened into a tilt: " + stepText);
+
+  const std::string smileText = tonetrace::describeCapture(
+      regionalCapture({6, 6, 0, -4, 0, 6, 6}));
+  require(containsText(smileText, "smile") &&
+              containsText(smileText, "dip"),
+          "Smile shape lost one of its outer lobes: " + smileText);
+
+  const std::string frownText = tonetrace::describeCapture(
+      regionalCapture({-6, -6, 0, 4, 0, -6, -6}));
+  require(containsText(frownText, "frown") &&
+              containsText(frownText, "peak"),
+          "Frown shape lost one of its outer lobes: " + frownText);
+
+  const std::string outlierText = tonetrace::describeCapture(
+      regionalCapture({0, 0, 0, 0, 3, 0, 0}));
+  require(containsText(outlierText, "peak") &&
+              !containsText(outlierText, "tilts") &&
+              !containsText(outlierText, "below"),
+          "Single outlier was misclassified as a broad feature: " + outlierText);
+
+  std::cout << "curve description shape classifier: passed\n";
 }
 
 void testDescriptionHonesty() {
-  // A single recessed band with no matching peak must not be reported as flat.
-  tonetrace::SpectrumCapture capture;
-  capture.sampleRate = 48000;
-  capture.fftSize = 4096;
-  capture.acceptedFrames = 100;
-  capture.confidence = 0.9;
-  for (double hz = 20.0; hz <= 20000.0; hz *= 1.02) {
-    const double level = hz >= 6000.0 ? -3.0 : 0.0;
-    capture.points.push_back({hz, level, 0.95, 1.0});
-  }
-  const std::string recessed = tonetrace::describeCapture(capture);
-  require(recessed.find("Least prominent") != std::string::npos,
-          "A recessed band should be described as least prominent");
-  require(recessed.find("air") != std::string::npos,
-          "The recessed band name should be mentioned");
-  require(recessed.find("Most prominent") == std::string::npos,
-          "A small recess should not invent a prominent peak");
-  require(recessed.find("close to flat") == std::string::npos,
-          "A recessed band must not be reported as a flat curve");
+  tonetrace::ProfileSnapshot snapshot;
+  snapshot.reference = regionalCapture({0, 0, 0, 0, 0, 0, 0});
+  snapshot.target = regionalCapture({-3, -3, -3, -3, 0, 0, 0});
+  const auto delta = tonetrace::describeToneTrace(snapshot);
+  require(containsText(delta.summary, "Target is 3 dB quieter than Reference below 2 kHz"),
+          "Target-vs-Reference broad low difference disappeared: " + delta.summary);
 
-  // A dominant cut must be reported with the correct sign, never as "+N dB".
-  tonetrace::CorrectionModel model;
-  model.mode = tonetrace::MatchMode::FullMix;
-  model.analysisLowHz = 10.0;
-  model.analysisHighHz = 30000.0;
-  model.resolution = 60;
-  model.nodes = {{100.0, -6.0, 1.0}, {2000.0, -6.0, 1.0}, {8000.0, -6.0, 1.0}};
-  const std::string correction = tonetrace::describeCorrection(model, 18.0);
-  require(correction.find("cuts the sub (20-60 Hz) by 6 dB") != std::string::npos,
-          "A cut should be described as a sentence with the band first");
-  require(correction.find("strongest move a 6 dB cut in the") != std::string::npos,
-          "The dominant cut should be reported as a 6 dB cut");
-  require(correction.find("+6 dB") == std::string::npos,
-          "A cut must not be reported with a plus sign");
-  require(correction.find("sub (20-60 Hz)") != std::string::npos &&
-              correction.find("air (6000-12000 Hz)") != std::string::npos,
-          "Region names should always carry their frequency range");
-  std::cout << "description honesty fixes: passed\n";
+  snapshot.reference = regionalCapture({6, 6, 0, 0, 0, 0, 0});
+  snapshot.target = regionalCapture({6, 6, 0, 0, 0, 0, 0});
+  require(containsText(tonetrace::describeToneTrace(snapshot).summary,
+                       "similar tonal shape"),
+          "Equal bass-heavy captures were not described as a similar shape");
+
+  tonetrace::CorrectionModel constant;
+  constant.mode = tonetrace::MatchMode::FullMix;
+  constant.analysisLowHz = 20.0;
+  constant.analysisHighHz = 20000.0;
+  constant.resolution = 30;
+  constant.nodes = {{20.0, 10.0, 1.0}, {20000.0, 10.0, 1.0}};
+  tonetrace::IrRenderSettings halfStrength;
+  halfStrength.sampleRate = 48000;
+  halfStrength.correctionStrength = 0.5;
+  const auto expectedHalf = tonetrace::evaluateCorrectionAt(
+      constant, 18.0, halfStrength, 1000.0);
+  const std::string halfText =
+      tonetrace::describeCorrection(constant, 18.0, halfStrength);
+  require(std::abs(expectedHalf.tonalDb - 5.0) < 1.0e-9 &&
+              containsText(halfText, "5 dB") &&
+              !containsText(halfText, "10 dB"),
+          "Correction description ignored applied Strength: " + halfText);
+
+  tonetrace::CorrectionModel peaked;
+  peaked.analysisLowHz = 20.0;
+  peaked.analysisHighHz = 20000.0;
+  peaked.nodes = {{100.0, 0.0, 1.0}, {2000.0, 10.0, 1.0},
+                  {10000.0, 0.0, 1.0}};
+  tonetrace::IrRenderSettings qOne;
+  qOne.sampleRate = 48000;
+  qOne.correctionSharpness = 1.0;
+  tonetrace::IrRenderSettings qFocused = qOne;
+  qFocused.correctionSharpness = 1.5;
+  const auto qOneApplied = tonetrace::evaluateCorrectionAt(
+      peaked, 18.0, qOne, 2000.0);
+  const auto qFocusedApplied = tonetrace::evaluateCorrectionAt(
+      peaked, 18.0, qFocused, 2000.0);
+  const std::string qOneText = tonetrace::describeCorrection(peaked, 18.0, qOne);
+  const std::string qFocusedText =
+      tonetrace::describeCorrection(peaked, 18.0, qFocused);
+  if (std::abs(qOneApplied.tonalDb - qFocusedApplied.tonalDb) >= 0.75) {
+    require(qOneText != qFocusedText,
+            "Correction Q changed the applied curve but not its description");
+  }
+
+  tonetrace::CorrectionModel flat;
+  flat.analysisLowHz = 20.0;
+  flat.analysisHighHz = 20000.0;
+  flat.nodes = {{20.0, 0.0, 1.0}, {20000.0, 0.0, 1.0}};
+  tonetrace::IrRenderSettings manual;
+  manual.sampleRate = 48000;
+  manual.manualGains.assign(10, 0.0);
+  const double gridLow = 20.0;
+  const double gridHigh = 20000.0;
+  const double targetLog = std::log(100.0 / gridLow) / std::log(gridHigh / gridLow);
+  const std::size_t manualIndex = static_cast<std::size_t>(
+      std::lround(targetLog * static_cast<double>(manual.manualGains.size() - 1)));
+  manual.manualGains[manualIndex] = 6.0;
+  const std::string manualText = tonetrace::describeCorrection(flat, 18.0, manual);
+  require(!containsText(manualText, "gentle across the whole range") &&
+              (containsText(manualText, "bass") || containsText(manualText, "below")),
+          "Manual trim did not reach the applied Correction description: " +
+              manualText);
+
+  tonetrace::IrRenderSettings partial;
+  partial.sampleRate = 48000;
+  partial.rangeLowHz = 60.0;
+  partial.rangeHighHz = 16000.0;
+  tonetrace::CorrectionModel sloped;
+  sloped.analysisLowHz = 20.0;
+  sloped.analysisHighHz = 20000.0;
+  sloped.nodes = {{60.0, 6.0, 1.0}, {16000.0, -6.0, 1.0}};
+  const std::string partialText =
+      tonetrace::describeCorrection(sloped, 18.0, partial);
+  require(!containsText(partialText, "sub (20 to 60 Hz)") &&
+              containsText(partialText, "brilliance from 12 kHz to 16 kHz") &&
+              !containsText(partialText, "brilliance (12 to 20 kHz)") &&
+              !containsText(partialText, "60-250"),
+          "Partial Correction range was described as full named regions: " +
+              partialText);
+
+  tonetrace::ProfileSnapshot referenceOnly;
+  referenceOnly.reference = regionalCapture({0, 3, 0, 0, 0, 0, 0});
+  require(tonetrace::describeToneTrace(referenceOnly).summary ==
+              "Reference captured; target not yet learned.",
+          "Reference-only summary changed its workflow meaning");
+
+  std::cout << "description applied-curve honesty: passed\n";
 }
 
 void testDescriptionCeilingHonesty() {
   tonetrace::CorrectionModel model;
   model.mode = tonetrace::MatchMode::FullMix;
-  model.analysisLowHz = 10.0;
-  model.analysisHighHz = 30000.0;
+  model.analysisLowHz = 20.0;
+  model.analysisHighHz = 20000.0;
   model.resolution = 60;
-  model.nodes = {{100.0, 30.0, 1.0}, {2000.0, -2.0, 1.0}, {8000.0, 4.0, 1.0}};
-  const std::string capped = tonetrace::describeCorrection(model, 18.0);
-  require(capped.find("by 18 dB") != std::string::npos,
-          "A capped correction should report the applied ceiling, not the raw value");
-  require(capped.find("by 30 dB") == std::string::npos,
-          "A capped correction must not report a value above the ceiling");
-  require(capped.find("limit the applied correction to 18 dB") != std::string::npos,
-          "The summary should state that the ceiling limited the correction");
-  const std::string wide = tonetrace::describeCorrection(model, 60.0);
-  require(wide.find("by 30 dB") != std::string::npos,
-          "A wide ceiling should report the full calculated value");
-  require(wide.find("limit the applied correction") == std::string::npos,
-          "A wide ceiling should not claim the correction was limited");
+  model.nodes = {{20.0, 30.0, 1.0}, {20000.0, 30.0, 1.0}};
+  tonetrace::IrRenderSettings settings;
+  settings.sampleRate = 48000;
 
-  const std::string ranged =
-      tonetrace::describeCorrection(model, 60.0, 60.0, 12000.0);
-  require(ranged.find("sub (20-60 Hz)") == std::string::npos,
-          "Correction description included a region below Correction Range Low");
-  require(ranged.find("brilliance (12000-20000 Hz)") == std::string::npos,
-          "Correction description included a region above Correction Range High");
+  const std::string capped = tonetrace::describeCorrection(model, 18.0, settings);
+  require(containsText(capped, "18 dB") &&
+              containsText(capped,
+                           "Maximum Correction clipped the learned curve from 30 dB to 18 dB before Strength, Q, and manual trims.") &&
+              !containsText(capped, "limit the applied correction") &&
+              !containsText(capped, "60-250"),
+          "Maximum Correction sentence mixed model ceiling with applied tonal gain: " +
+              capped);
+
+  tonetrace::CorrectionModel under = model;
+  under.nodes = {{20.0, 10.0, 1.0}, {20000.0, 10.0, 1.0}};
+  const std::string underText =
+      tonetrace::describeCorrection(under, 18.0, settings);
+  require(!containsText(underText, "Maximum Correction clipped"),
+          "Under-ceiling model falsely claimed Maximum Correction clipping");
+
+  tonetrace::IrRenderSettings halfStrength = settings;
+  halfStrength.correctionStrength = 0.5;
+  const std::string cappedHalf =
+      tonetrace::describeCorrection(model, 18.0, halfStrength);
+  require(containsText(cappedHalf, "9 dB") &&
+              containsText(cappedHalf, "from 30 dB to 18 dB"),
+          "Strength and Maximum Correction stages were conflated: " + cappedHalf);
+
   std::cout << "description ceiling honesty: passed\n";
 }
 

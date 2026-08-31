@@ -344,8 +344,11 @@ Bypass crossfades Tone Trace to the **dry input**. It does not mute the track. W
 Tone Trace's Windows editor uses real Win32 controls for keyboard and screen-reader access. The visual curve is supplementary; you do not need to interpret the graph to operate the plug-in.
 
 The read-only text box containing the natural-language curve summary has the
-native accessible label **Curve Description**. Its displayed text is the value,
-not the control name.
+native accessible label **Curve Description**. It gives every user a concise
+overview of broad tonal geometry — shelves, peaks or dips, tilts, smile/frown
+shapes, the Target-vs-Reference difference, and the applied correction. It is
+not a sample-by-sample transcription of the graph; exact point Hz/dB values stay
+in the readout. Its displayed text is the value, not the control name.
 
 The native editor is the complete supported interface. Its labeled **Status** panel shows the current workflow state and, while capturing, the accepted capture time, confidence, curve drift, and last meaningful action. Meaningful state changes are announced through normal Windows accessibility events; continuously changing time/drift telemetry is visually refreshed at a restrained rate instead of generating constant speech.
 
@@ -361,7 +364,7 @@ The Match page draws three curves:
 
 Reference and Target are displayed relative to their own broad level so the graph emphasizes **tonal shape rather than loudness difference**. The Correction curve is shown in actual correction dB.
 
-The graph's vertical range adapts to the captured material instead of forcing every trace into a fixed +/-12 dB window. A small `+/- N dB` label shows the current visual range. This affects only the drawing; it does not change the learned match. Exact frequency and dB values remain available in the readout and Curve Description box, so the graph is never required for operation.
+The graph's vertical range adapts to the captured material instead of forcing every trace into a fixed +/-12 dB window. A small `+/- N dB` label shows the current visual range. This affects only the drawing; it does not change the learned match. Exact point frequency and dB values remain available in the readout, while Curve Description summarizes the broad shape in one-decimal prose. The Bands pages expose the editable correction directly, so the graph is never required for operation.
 
 Moving the pointer across the graph places a dotted cursor line, and a small label beside it names the frequency under the pointer. The same frequency — together with the Reference, Target, and Correction values at that point — always appears in the readout below the graph, so the hover label is a convenience for sighted pointer use and never the only source of the value.
 

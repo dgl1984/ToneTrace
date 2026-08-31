@@ -14,9 +14,10 @@ engine.
 2. **Painted is not accessible.** Everything drawn on the canvas is visual only.
    The screen-reader surface is a set of native Win32 controls, most importantly
    a **readonly description box** that describes the curves in words.
-3. **Keyboard is first-class.** Tab order follows workflow, arrows move the
-   trace cursor, one explicit "Describe curves" command fills the description
-   box, and `EVENT_OBJECT_VALUECHANGE` on that box lets NVDA announce it once.
+3. **Keyboard is first-class.** Tab order follows workflow and arrows move the
+   trace cursor. The Curve Description box refreshes from the same committed
+   snapshot the graph uses, and **Copy Curve Description** copies that existing
+   overview without creating a separate accessibility-only result.
 4. **Silent by default.** Real-time painted elements (the live trace, meters)
    never announce continuously, matching the OptiLab meter doctrine.
 
@@ -48,16 +49,18 @@ Canvas interactions:
 - The pointer becomes a crosshair over the Match plot, and the hover cursor is
   visibly repainted as it moves instead of changing only the text readout.
 - Arrow keys move the same cursor (blind + keyboard).
-- The readonly Curve Description box contains a natural-language summary, e.g.: *"Reference rises from 100 Hz to 4 kHz with a 3 dB presence
-  bump; target is 6 dB darker below 200 Hz; correction cuts 3 dB at 100 Hz,
-  boosts 2 dB at 2 kHz, strongest in the low-mid region."*
+- The readonly Curve Description box contains a concise natural-language
+  overview of the same learned shapes, e.g.: *"The curve is 6 dB quieter above
+  6 kHz than below it."* Target-vs-Reference and Correction sections use the
+  same shelf/peak/dip/tilt/smile/frown vocabulary. Exact point values remain in
+  the normal readout rather than being duplicated into prose.
 
 ## Accessibility surface (native controls)
 
 | Control | Role | Purpose |
 | --- | --- | --- |
 | Curve description label | STATIC | Native accessible name for the description edit; never painted-only |
-| Curve description box | READONLY multiline EDIT | Natural-language description of all curves; sole non-visual curve reading |
+| Curve description box | READONLY multiline EDIT | Broad natural-language overview of learned curves; complements the exact Hz/dB readout |
 | Trace/readout box | READONLY EDIT; wraps visually on band pages | Exact Hz/dB on Match; concise band-page guidance and focused-band detail |
 | Capture Reference / Learn Target / Correct / Freeze | BUTTONs | Workflow steps (mirror the CLAP WorkflowAction param); Learn Target saves the Reference first, then begins Target capture |
 | Match Mode | labeled COMBOBOX (named options) | Voice default; Full Mix / Voice / Drums / Bass+Synth / Custom |

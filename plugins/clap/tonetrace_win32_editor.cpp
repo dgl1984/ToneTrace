@@ -2387,12 +2387,8 @@ void ToneTraceWin32Editor::Impl::refreshStatus() {
 void ToneTraceWin32Editor::Impl::refreshDescription() {
   if (descriptionEdit_ == nullptr) return;
   const auto* snapshot = getSnapshot_ != nullptr ? getSnapshot_(context_) : nullptr;
-  std::wstring text;
-  if (snapshot != nullptr) {
-    text = win32MultilineText(widen(tonetrace::curveDescriptionText(*snapshot)));
-  } else {
-    text = L"Tone Trace summary\r\n\r\nNo captures yet. Capture Reference to begin.";
-  }
+  std::wstring text = win32MultilineText(widen(tonetrace::curveDescriptionText(
+      snapshot != nullptr ? *snapshot : tonetrace::ProfileSnapshot{})));
   if (text == lastDescriptionText_) return;
   lastDescriptionText_ = text;
   SetWindowTextW(descriptionEdit_, text.c_str());
