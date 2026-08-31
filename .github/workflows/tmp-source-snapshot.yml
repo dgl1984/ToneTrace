@@ -1,0 +1,16 @@
+name: Temporary source snapshot
+on:
+  push:
+    branches: [tmp/description-language-audit]
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Archive source
+        run: git archive --format=zip --output=ToneTrace-description-language-source.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ToneTrace-description-language-source
+          path: ToneTrace-description-language-source.zip
+          if-no-files-found: error
