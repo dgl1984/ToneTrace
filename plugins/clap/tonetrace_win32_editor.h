@@ -30,6 +30,7 @@ class ToneTraceWin32Editor {
       void* context, int which);
   using SetParamFn = void (*)(void* context, std::uint32_t paramId,
                               double value);
+  using ResetFn = void (*)(void* context);
   using PlayToneFn = void (*)(void* context, double frequencyHz);
   using PlayBandSweepFn = void (*)(void* context, double fromHz, double toHz,
                                    int bandCount, double durationMs);
@@ -53,7 +54,7 @@ class ToneTraceWin32Editor {
                        const struct clap_plugin_params* params,
                        void* context, GetSnapshotFn getSnapshot,
                        GetStagedSpectrumFn getStagedSpectrum,
-                       SetParamFn setParam, PlayToneFn playTone,
+                       SetParamFn setParam, ResetFn reset, PlayToneFn playTone,
                        PlayBandSweepFn playBandSweep, SetBandGainFn setBandGain,
                        GetBandGainFn getBandGain, GetBandCountFn getBandCount,
                        SetImportedSpectrumFn setImportedSpectrum = nullptr,

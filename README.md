@@ -84,10 +84,16 @@ exact-value field, NVDA, and Narrator. Values retain up to three meaningful
 decimal places, and Narrator does not substitute percentages.
 
 With NVDA, band navigation is intentionally concise. The read-only curve text
-is explicitly labeled **Curve Description**, and global controls and workflow
-status are also exposed through the host's generic parameter interface,
-including workflows such as REAPER with OSARA. Optional tone notifications can
-provide additional nonvisual feedback and are enabled by default.
+is explicitly labeled **Curve Description**, and the native **Status** panel
+shows the current workflow state, capture time, confidence, curve drift, and
+last meaningful action. The same window is intended for sighted, keyboard-only,
+NVDA, and Narrator users; no accessibility-specific mode is required.
+
+Writable global controls and the workflow are also available through a host's
+generic parameter interface, including REAPER with OSARA. Live status telemetry
+is deliberately kept out of host automation so it cannot compete with user
+control. Optional tone notifications provide supplementary feedback and are
+enabled by default.
 
 Accessibility feedback is especially welcome at `info@lanesaudio.com`.
 
@@ -95,8 +101,10 @@ Accessibility feedback is especially welcome at `info@lanesaudio.com`.
 
 Tone Trace 1.0 ships as **CLAP**.
 
-The Windows CLAP build includes the native accessible editor. The custom editor
-is Windows-only; non-Windows source builds use the host's CLAP parameter view.
+The Windows CLAP build includes the complete native editor and is the supported
+release surface. The custom editor is Windows-only; non-Windows source builds
+remain headless engineering builds that use the host's CLAP parameter view and
+do not provide the supported native Status/curve interface.
 
 Version 1.0.3 has one release asset:
 `ToneTrace_EQ_1.0.3_Windows_x64.zip`. Per-file SHA-256 hashes are stored inside

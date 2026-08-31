@@ -442,7 +442,10 @@ double processCommand(const clap_plugin_t* plugin,
   if (expectedPersisted < 0) expectedPersisted = command;
   require(params != nullptr && params->get_value(plugin, kWorkflow, &persisted) &&
               static_cast<int>(persisted) == expectedPersisted,
-          "workflow step did not persist at the requested value");
+          "workflow step did not persist at the requested value: command=" +
+              std::to_string(command) + ", expected=" +
+              std::to_string(expectedPersisted) + ", actual=" +
+              std::to_string(persisted));
   double energy = 0.0;
   for (const auto& channel : output) {
     for (const float sample : channel) energy += std::abs(sample);
@@ -751,8 +754,15 @@ void run(const char* modulePath,
       require(info.name[0] != '\0' && info.min_value <= info.default_value &&
                   info.default_value <= info.max_value,
               "invalid parameter descriptor");
-      require((info.flags & CLAP_PARAM_IS_AUTOMATABLE) != 0,
-              "a parameter is hidden from OSARA because it is not automatable");
+      if ((info.flags & CLAP_PARAM_IS_READONLY) != 0) {
+        require((info.flags & CLAP_PARAM_IS_HIDDEN) != 0 &&
+                    (info.flags & CLAP_PARAM_IS_AUTOMATABLE) == 0,
+                "read-only telemetry is still exposed as host automation");
+      } else {
+        require((info.flags & CLAP_PARAM_IS_AUTOMATABLE) != 0 &&
+                    (info.flags & CLAP_PARAM_IS_HIDDEN) == 0,
+                "a writable public control is not exposed to the host");
+      }
       ids.push_back(info.id);
       orderedIds.push_back(info.id);
     }
@@ -764,6 +774,17 @@ void run(const char* modulePath,
         190, 180, 270, 250, 200, 210, 220, 240, 260};
     require(orderedIds == expectedOrder,
             "generic parameter order no longer matches the frozen accessible design");
+    std::vector<clap_id> visibleIds;
+    for (uint32_t index = 0; index < instance.params->count(instance.plugin); ++index) {
+      clap_param_info_t info{};
+      require(instance.params->get_info(instance.plugin, index, &info),
+              "parameter descriptor query failed while checking visible controls");
+      if ((info.flags & CLAP_PARAM_IS_HIDDEN) == 0) visibleIds.push_back(info.id);
+    }
+    const std::vector<clap_id> expectedVisibleOrder{
+        100, 110, 160, 170, 120, 130, 140, 150, 190, 180, 270, 250, 240, 260};
+    require(visibleIds == expectedVisibleOrder,
+            "host-visible control order contains telemetry or lost a public control");
     char accessibleText[128]{};
     double parsedValue = -1.0;
     require(instance.params->value_to_text(instance.plugin, kWorkflow, 2.0,
@@ -819,13 +840,12 @@ void run(const char* modulePath,
       attemptedWrite.parameter(0, kConfidence, 1.0);
       process(instance.plugin, input, output, &attemptedWrite, &restoredValue);
       require(instance.parameter(kConfidence) == 0.0 &&
-                  std::any_of(restoredValue.events.begin(),
-                              restoredValue.events.end(),
-                              [](const auto& event) {
-                                return event.param_id == kConfidence &&
-                                       event.value == 0.0;
-                              }),
-              "a moved read-only status value did not self-restore for the host");
+                  std::none_of(restoredValue.events.begin(),
+                               restoredValue.events.end(),
+                               [](const auto& event) {
+                                 return event.param_id == kConfidence;
+                               }),
+              "hidden read-only telemetry leaked back into the host event stream");
     }
 
     std::array<std::vector<double>, 2> doubleInput{
@@ -894,10 +914,63 @@ void run(const char* modulePath,
             "a setup control changed during capture instead of self-restoring");
     processCommand(instance.plugin, 0);
     processCommand(instance.plugin, 1);
+
+    // Live capture telemetry is native-editor information, not automation. A
+    // normal accepted-audio block must not emit Status/Last/Confidence/Drift/Time
+    // parameter events to the host.
+    {
+      std::array<std::vector<float>, 2> telemetryInput{
+          std::vector<float>(512, 0.05F), std::vector<float>(512, -0.05F)};
+      std::array<std::vector<float>, 2> telemetryOutput;
+      OutputEvents telemetryEvents;
+      process(instance.plugin, telemetryInput, telemetryOutput, nullptr,
+              &telemetryEvents);
+      require(std::none_of(telemetryEvents.events.begin(),
+                           telemetryEvents.events.end(),
+                           [](const auto& event) {
+                             return event.param_id == kStatus ||
+                                    event.param_id == kLastCommand ||
+                                    event.param_id == kConfidence ||
+                                    event.param_id == kCurveDrift ||
+                                    event.param_id == kCaptureTime;
+                           }),
+              "live capture telemetry leaked into host parameter events");
+    }
+
+    // A rapid host move 1 -> 2 -> 0 can place Save/Learn and Ready in the same
+    // event group. Ready must cancel the earlier queued command; the old code
+    // allowed command 2 to execute afterward and snap the control back to 1.
+    {
+      std::array<std::vector<float>, 2> input{
+          std::vector<float>(64), std::vector<float>(64)};
+      std::array<std::vector<float>, 2> output;
+      InputEvents events;
+      OutputEvents responses;
+      events.command(0, 2);
+      events.command(0, 0);
+      process(instance.plugin, input, output, &events, &responses);
+      require(instance.parameter(kWorkflow) == 0.0 &&
+                  instance.parameter(kLastCommand) == 1.0 &&
+                  instance.parameter(kStatus) != 27.0,
+              "Ready/No action did not cancel a stale queued workflow command");
+      require(std::none_of(responses.events.begin(), responses.events.end(),
+                           [](const auto& event) {
+                             return event.param_id == kStatus ||
+                                    event.param_id == kLastCommand ||
+                                    event.param_id == kConfidence ||
+                                    event.param_id == kCurveDrift ||
+                                    event.param_id == kCaptureTime;
+                           }),
+              "cancelled workflow batch still emitted hidden telemetry");
+    }
+    processCommand(instance.plugin, 1);
     processParameter(instance.plugin, kToneLevel, -30.0);
     const double quietWarning = processCommand(instance.plugin, 2, 1, 12000);
     require(instance.parameter(kStatus) == 27.0 && quietWarning > 0.01,
-            "premature Save did not recover to Capture Reference with a warning sweep");
+            "premature Save did not recover to Capture Reference with a warning sweep: status=" +
+                std::to_string(instance.parameter(kStatus)) + ", workflow=" +
+                std::to_string(instance.parameter(kWorkflow)) + ", energy=" +
+                std::to_string(quietWarning));
     processParameter(instance.plugin, kToneLevel, -12.0);
     const double loudWarning = processCommand(instance.plugin, 2, 1, 12000);
     require(loudWarning > quietWarning * 4.0,
@@ -907,6 +980,30 @@ void run(const char* modulePath,
     require(mutedWarning == 0.0,
             "Tone Notifications Off did not mute real tone output");
     processParameter(instance.plugin, kToneNotifications, 1.0);
+
+    // A rejected Save/Learn request restores the plug-in to workflow step 1.
+    // The host may still visually believe it was on 2, so once enough audio
+    // has arrived a later 2 must be accepted without requiring the user to
+    // first send another explicit 1. This is the real OSARA retry case.
+    {
+      constexpr std::size_t retryFrames = 48000;
+      std::array<std::vector<float>, 2> retryReference{
+          std::vector<float>(retryFrames), std::vector<float>(retryFrames)};
+      for (std::size_t frame = 0; frame < retryFrames; ++frame) {
+        const float sample = static_cast<float>(
+            0.08 * std::sin(static_cast<double>(frame) * 0.071));
+        retryReference[0][frame] = sample;
+        retryReference[1][frame] = sample;
+      }
+      processSignal(instance.plugin, retryReference);
+      require(instance.parameter(kCaptureTime) >= 0.35,
+              "retry fixture did not make Reference saveable");
+      processCommand(instance.plugin, 2);
+      require(instance.parameter(kWorkflow) == 2.0 &&
+                  instance.parameter(kStatus) == 2.0,
+              "Save/Learn could not be retried after an earlier rejection");
+      processCommand(instance.plugin, 1);
+    }
 
     std::array<std::vector<float>, 2> abandonedCapture{
         std::vector<float>(512, 0.05F), std::vector<float>(512, -0.05F)};
@@ -986,6 +1083,13 @@ void run(const char* modulePath,
                 instance.parameter(kLastCommand) == 2.0 &&
                 instance.parameter(kStatus) == 2.0,
             "flushed Workflow Step could not advance Reference to Target");
+    // A stale duplicate host value must be idempotent once Target capture has
+    // actually begun. It must never reset Reference/Target state.
+    processCommand(instance.plugin, 0);
+    processCommand(instance.plugin, 2);
+    require(instance.parameter(kWorkflow) == 2.0 &&
+                instance.parameter(kStatus) == 2.0,
+            "duplicate Save/Learn command rolled Target capture backward");
     processSignal(instance.plugin, target);
     require(instance.parameter(kConfidence) > 0.0,
             "target capture did not update live confidence");
@@ -1268,7 +1372,7 @@ void run(const char* modulePath,
 
     processCommand(restored.plugin, 5);
     require(restored.parameter(kStatus) == 6.0, "reset was not armed");
-    processCommand(restored.plugin, 7);
+    processCommand(restored.plugin, 7, 4);
     require(restored.parameter(kStatus) == 5.0 &&
                 restored.tail->get(restored.plugin) > 0,
             "Cancel Reset did not restore the frozen last-known-good profile");

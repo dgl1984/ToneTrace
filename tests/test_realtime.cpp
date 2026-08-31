@@ -130,9 +130,13 @@ void testParameterContract() {
     require(identifiers.insert(static_cast<std::uint32_t>(parameter.id)).second,
             "A stable parameter identifier is duplicated");
     require(names.insert(parameter.name).second, "A parameter name is duplicated");
-    require(parameter.automatable,
-            "Every parameter must be automatable so OSARA exposes it "
-            "to a screen-reader user");
+    if (parameter.readOnly) {
+      require(!parameter.automatable,
+              "Read-only status telemetry must not be automatable");
+    } else {
+      require(parameter.automatable,
+              "Every writable public control must remain host-automatable");
+    }
   }
   for (std::size_t index = 0; index < expectedOrder.size(); ++index) {
     require(parameters[index].name == expectedOrder[index],

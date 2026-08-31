@@ -51,7 +51,7 @@ Typical system-wide plug-in locations are:
 
 Copy the CLAP plug-in into the appropriate folder, then rescan plug-ins in your DAW if necessary.
 
-The native Tone Trace editor is currently a **Windows Win32 editor**. The plug-in's global parameters are also available through the host's generic parameter view.
+The native Tone Trace editor is currently a **Windows Win32 editor**. Every supported user operation is available in that window. Writable global controls are also available through the host's generic parameter view, but live status telemetry belongs to the native Status panel rather than host automation.
 
 ### Plug-in format
 
@@ -170,18 +170,21 @@ Frozen playback reports zero samples of plug-in latency.
 
 ### Reset
 
-Reset is intentionally two-step and is exposed through the host's **Workflow Step** parameter:
+In the Windows editor, choose **Options...**, then **Reset Tone Trace...**. Tone Trace opens a normal confirmation dialog and makes **No** the safe default. Confirming clears the learned Reference/Target match and all manual band edits.
+
+The host's **Workflow Step** parameter keeps an equivalent explicit three-state route for control surfaces and generic parameter views:
 
 1. **Arm Reset**
 2. **Confirm Reset**
+3. **Cancel Reset**
 
-Use **Cancel Reset** to return to the previous state without deleting the profile. Tone Trace does not put three extra Reset buttons into the native editor; in REAPER, these commands remain available through the generic FX parameter view.
+Both routes use the same underlying reset operation. Cancel Reset returns to the workflow state that actually existed before reset was armed.
 
 ## 5. Confidence, stability, and capture status
 
 ### Capture Confidence
 
-**Capture Confidence** is a read-only reliability indicator for the material accepted so far. Internally the live workflow uses four practical levels: none, low, medium, and high. Some hosts display those as values between 0 and 1.
+**Capture Confidence** is a read-only reliability indicator for the material accepted so far. The native Status panel reports the practical levels directly: none, low, medium, and high. Confidence is live information, not an automatable parameter.
 
 Confidence is not a promise that the capture represents everything the source can do. A highly repetitive few seconds can become statistically stable without being representative of the whole voice, instrument, or mix.
 
@@ -235,7 +238,9 @@ There is one deliberate limitation: the raw recordings are not stored in the pro
 
 ## 7. Main controls
 
-The Windows Match page keeps the controls used most often in front of you: Match Mode, Correction Strength, Maximum Correction, Correction Gain, Q / Sharpness, the low/high correction range, and Emergency Clip Guard. **Correction Resolution** has its own labeled control on every Bands page. It also remains available through the host's generic parameter view, along with less frequently changed global options such as **Full Correction Range**, tone-notification settings, Bypass, and the Reset workflow.
+The Windows Match page keeps the controls used most often in front of you: Match Mode, Correction Strength, Maximum Correction, Correction Gain, Q / Sharpness, the low/high correction range, and Emergency Clip Guard. **Correction Resolution** has its own labeled control on every Bands page.
+
+Choose **Options...** for the less frequently changed global controls: **Full Correction Range**, **Tone Notifications**, **Confidence Tone Volume**, **Bypass**, and **Reset Tone Trace**. These are ordinary native controls, not an accessibility-only route. The same writable parameters remain available through the host's generic parameter view where that is useful.
 
 When you type a number into one of the Match-page value boxes, press **Enter**
 to apply it immediately, or press **Tab** to apply it and move to the next
@@ -342,7 +347,9 @@ The read-only text box containing the natural-language curve summary has the
 native accessible label **Curve Description**. Its displayed text is the value,
 not the control name.
 
-The host's generic parameter view exposes the global workflow, matching controls, safety controls, and live status. Correction Resolution is deliberately available there and in the native Bands pages. The native editor additionally provides the trace-band editor, curve descriptions, and Import/Export commands.
+The native editor is the complete supported interface. Its labeled **Status** panel shows the current workflow state and, while capturing, the accepted capture time, confidence, curve drift, and last meaningful action. Meaningful state changes are announced through normal Windows accessibility events; continuously changing time/drift telemetry is visually refreshed at a restrained rate instead of generating constant speech.
+
+The host's generic parameter view exposes the writable workflow, matching, safety, and global controls. It does **not** expose live Status, Last Command, Capture Confidence, Curve Drift, or Capture Time as automation parameters. Correction Resolution remains deliberately available both there and in the native Bands pages. The native editor also provides the trace-band editor, Curve Description, Options, and Import/Export commands.
 
 ### Reading the Match graph
 
@@ -588,13 +595,13 @@ This manual is intentionally about using Tone Trace. Source architecture, DSP de
 - `GUI_DESIGN.md`
 - `plugins/README.md`
 
-## 15. Parameter reference
+## 15. Host-visible parameter reference
+
+These are the writable controls a CLAP host may expose for automation or generic control. Live status telemetry is intentionally absent from this table because it is displayed in Tone Trace's native Status panel rather than masquerading as automation.
 
 | Parameter | Range | Default | Access |
 | --- | --- | --- | --- |
 | Workflow Step | 0–7 | 0 | writable |
-| Status | 0–29 | 0 | read-only |
-| Last Command | 0–7 | 0 | read-only |
 | Match Mode | 0–4 | Voice | writable |
 | Maximum Correction | 1–60 dB | 18 dB | writable |
 | Full Correction Range | Off/On | Off | writable |
@@ -606,11 +613,20 @@ This manual is intentionally about using Tone Trace. Source architecture, DSP de
 | Correction Gain | -24 to +12 dB | 0 dB | writable |
 | Emergency Clip Guard | -12 to +20 dBFS | +6 dBFS | writable |
 | Confidence Tone Volume | -60 to -12 dB | -12 dB | writable |
-| Capture Confidence | 0–1 | 0 | read-only |
-| Curve Drift | 0–60 | 60 | read-only |
-| Capture Time | 0–3600 s host range | 0 | read-only; current capture buffer is about 30 s |
 | Tone Notifications | Off/On | On | writable |
 | Bypass | Off/On | Off | writable |
+
+### Native Status panel fields
+
+The Windows Status panel displays these live values together in ordinary visible/readable text:
+
+- current workflow/status message
+- accepted Capture Time
+- Capture Confidence
+- Curve Drift
+- Last action
+
+They are diagnostic information, not automation controls.
 
 ### Workflow Step values
 

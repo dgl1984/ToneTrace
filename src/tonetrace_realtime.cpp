@@ -370,14 +370,16 @@ CorrectionModel readModel(std::istream& stream) {
 
 }  // namespace
 
-// Every parameter must be automatable so that OSARA's FX parameter list exposes
-// it to a screen-reader user; OSARA filters out any non-automatable parameter.
-// Read-only feedback parameters are therefore automatable but not writable.
+// Writable controls remain automatable so hosts and control surfaces can use
+// them. Read-only live telemetry is deliberately NOT automatable: it belongs
+// to the plug-in's native Status panel and must never compete with user control
+// events in a host parameter stream. The CLAP wrapper marks those telemetry
+// descriptors hidden as an internal read-only transport for the editor/tests.
 const std::vector<ParameterDescriptor>& parameterDescriptors() {
   static const std::vector<ParameterDescriptor> descriptors{
       {ParameterId::WorkflowAction, "Workflow Step", 0.0, 7.0, 0.0, "", true, false, true},
-      {ParameterId::Status, "Status", 0.0, 29.0, 0.0, "", true, true, true},
-      {ParameterId::LastCommand, "Last Command", 0.0, 7.0, 0.0, "", true, true, true},
+      {ParameterId::Status, "Status", 0.0, 29.0, 0.0, "", false, true, true},
+      {ParameterId::LastCommand, "Last Command", 0.0, 7.0, 0.0, "", false, true, true},
       {ParameterId::MatchMode, "Match Mode", 0.0, 4.0, 1.0, "", true, false, true},
       {ParameterId::MaximumCorrectionDb, "Maximum Correction", 1.0, 60.0, 18.0, "dB", true, false, false},
       {ParameterId::CompleteMatch, "Full Correction Range", 0.0, 1.0, 0.0, "", true, false, true},
@@ -389,9 +391,9 @@ const std::vector<ParameterDescriptor>& parameterDescriptors() {
       {ParameterId::CorrectionGainDb, "Correction Gain", -24.0, 12.0, 0.0, "dB", true, false, false},
       {ParameterId::EmergencyClipGuardDb, "Emergency Clip Guard", -12.0, 20.0, 6.0, "dB", true, false, false},
       {ParameterId::ToneLevelDb, "Confidence Tone Volume", -60.0, -12.0, -12.0, "dB", true, false, false},
-      {ParameterId::Confidence, "Capture Confidence", 0.0, 1.0, 0.0, "", true, true, false},
-      {ParameterId::CurveDriftDb, "Curve Drift", 0.0, 60.0, 60.0, "dB", true, true, false},
-      {ParameterId::CaptureSeconds, "Capture Time", 0.0, 3600.0, 0.0, "s", true, true, false},
+      {ParameterId::Confidence, "Capture Confidence", 0.0, 1.0, 0.0, "", false, true, false},
+      {ParameterId::CurveDriftDb, "Curve Drift", 0.0, 60.0, 60.0, "dB", false, true, false},
+      {ParameterId::CaptureSeconds, "Capture Time", 0.0, 3600.0, 0.0, "s", false, true, false},
       {ParameterId::ToneNotifications, "Tone Notifications", 0.0, 1.0, 1.0, "", true, false, true},
       {ParameterId::Bypass, "Bypass", 0.0, 1.0, 0.0, "", true, false, true},
   };

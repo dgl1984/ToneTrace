@@ -12,3 +12,23 @@ EXSTYLE WS_EX_CONTROLPARENT
 CAPTION "Tone Trace EQ"
 BEGIN
 END
+
+
+// Less-frequently changed global controls live in a standard native dialog
+// rather than being host-only. This keeps the main editor visually focused
+// while preserving the same mouse, keyboard, and screen-reader operation.
+IDD_TONETRACE_OPTIONS DIALOGEX 0, 0, 272, 178
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Tone Trace EQ Options"
+FONT 9, "Segoe UI"
+BEGIN
+    CONTROL         "Full Correction Range", IDC_OPTION_FULL_CORRECTION, "BUTTON", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 12, 150, 14
+    CONTROL         "Tone Notifications", IDC_OPTION_TONE_NOTIFICATIONS, "BUTTON", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 34, 150, 14
+    LTEXT           "Confidence Tone Volume", IDC_OPTION_TONE_LEVEL_LABEL, 12, 58, 112, 12
+    EDITTEXT        IDC_OPTION_TONE_LEVEL, 130, 55, 66, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    CONTROL         "Bypass", IDC_OPTION_BYPASS, "BUTTON", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 80, 100, 14
+    PUSHBUTTON      "Reset Tone Trace...", IDC_OPTION_RESET, 12, 108, 104, 18, WS_TABSTOP
+    LTEXT           "Reset clears the learned match and manual band edits.", -1, 124, 108, 136, 28
+    DEFPUSHBUTTON   "OK", IDOK, 156, 148, 48, 18
+    PUSHBUTTON      "Cancel", IDCANCEL, 212, 148, 48, 18
+END

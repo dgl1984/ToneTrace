@@ -690,9 +690,12 @@ class ToneTraceClap {
   }
 
   void markDirty(std::size_t index) noexcept {
-    if (index < dirtyValues_.size()) {
-      dirtyValues_[index]->store(true, std::memory_order_release);
+    const auto& descriptors = tonetrace::parameterDescriptors();
+    if (index >= dirtyValues_.size() || index >= descriptors.size() ||
+        descriptors[index].readOnly) {
+      return;
     }
+    dirtyValues_[index]->store(true, std::memory_order_release);
   }
 
   void setStatus(Status status) noexcept {
@@ -967,9 +970,51 @@ class ToneTraceClap {
   }
 
   void setWorkflowStep(int step) noexcept {
+    if (step == 0) {
+      pendingWorkflowCommand_.store(0, std::memory_order_release);
+    }
     lastWorkflowStep_.store(step, std::memory_order_release);
     setValue(tonetrace::ParameterId::WorkflowAction,
              static_cast<double>(step), true);
+  }
+
+  [[nodiscard]] int workflowStepForCurrentPhase() const noexcept {
+    if (resetArmed_.load(std::memory_order_acquire)) return 5;
+    switch (phase_.load(std::memory_order_acquire)) {
+      case tonetrace::WorkflowPhase::CapturingReference: return 1;
+      case tonetrace::WorkflowPhase::CapturingTarget: return 2;
+      case tonetrace::WorkflowPhase::Preview: return 3;
+      case tonetrace::WorkflowPhase::Frozen: return 4;
+      case tonetrace::WorkflowPhase::Ready: return 0;
+    }
+    return 0;
+  }
+
+  [[nodiscard]] bool workflowCommandAlreadySatisfied(int command) const noexcept {
+    const auto phase = phase_.load(std::memory_order_acquire);
+    switch (command) {
+      // Capture Reference is intentionally restartable after the user moves
+      // away from step 1 and explicitly selects it again. Same-value host
+      // echoes never queue here because applyParameter filters them first.
+      case 2: return phase == tonetrace::WorkflowPhase::CapturingTarget;
+      case 3: return phase == tonetrace::WorkflowPhase::Preview;
+      case 4: return phase == tonetrace::WorkflowPhase::Frozen;
+      case 5: return resetArmed_.load(std::memory_order_acquire);
+      default: return false;
+    }
+  }
+
+  bool beginConfirmedReset() noexcept {
+    if (controlBusy_.load(std::memory_order_acquire)) {
+      setStatus(Status::Analyzing);
+      return false;
+    }
+    stopTones();
+    resetArmed_.store(false, std::memory_order_release);
+    setStatus(Status::Analyzing);
+    controlBusy_.store(true, std::memory_order_release);
+    requestMainThread(WorkReset);
+    return true;
   }
 
   [[nodiscard]] Status captureStatus(tonetrace::WorkflowPhase phase,
@@ -1004,6 +1049,14 @@ class ToneTraceClap {
       setValue(tonetrace::ParameterId::LastCommand,
                static_cast<double>(command), true);
     }
+    // Host parameter echoes are not user intent. Once a workflow request has
+    // already reached its phase, treating the same command as destructive can
+    // erase a live capture or roll the workflow backward. Make the ordinary
+    // workflow commands idempotent at their achieved phase.
+    if (workflowCommandAlreadySatisfied(command)) {
+      setWorkflowStep(command);
+      return true;
+    }
     if (command != 0 && controlBusy_.load(std::memory_order_acquire)) {
       setStatus(Status::Analyzing);
       return false;
@@ -1025,20 +1078,24 @@ class ToneTraceClap {
         setValue(tonetrace::ParameterId::CurveDriftDb, 60.0, true);
         setValue(tonetrace::ParameterId::CaptureSeconds, 0.0, true);
         break;
-      case 2:
-        if (phase_.load(std::memory_order_acquire) !=
-                tonetrace::WorkflowPhase::CapturingReference ||
-            !reference_.readyForSave(sampleRate_)) {
-          if (phase_.load(std::memory_order_acquire) !=
-              tonetrace::WorkflowPhase::CapturingReference) {
-            reference_.reset();
-            target_.reset();
-            phase_.store(tonetrace::WorkflowPhase::CapturingReference,
-                         std::memory_order_release);
-            setValue(tonetrace::ParameterId::Confidence, 0.0, true);
-            setValue(tonetrace::ParameterId::CurveDriftDb, 60.0, true);
-            setValue(tonetrace::ParameterId::CaptureSeconds, 0.0, true);
+      case 2: {
+        const auto currentPhase = phase_.load(std::memory_order_acquire);
+        if (currentPhase != tonetrace::WorkflowPhase::CapturingReference) {
+          // A stale/out-of-order host command must never erase captures.
+          // Restore the public workflow selector to the phase that actually
+          // exists and leave the audio/profile state untouched.
+          setWorkflowStep(workflowStepForCurrentPhase());
+          setStatus(currentPhase == tonetrace::WorkflowPhase::Frozen
+                        ? Status::Frozen
+                        : currentPhase == tonetrace::WorkflowPhase::Preview
+                              ? Status::Preview
+                              : Status::InvalidCapture);
+          if (currentPhase == tonetrace::WorkflowPhase::Ready) {
+            startSweep(420.0, 180.0, 220.0);
           }
+          break;
+        }
+        if (!reference_.readyForSave(sampleRate_)) {
           captureBlocked_ = true;
           setWorkflowStep(1);
           startSweep(420.0, 180.0, 220.0);
@@ -1057,19 +1114,25 @@ class ToneTraceClap {
         setValue(tonetrace::ParameterId::CurveDriftDb, 60.0, true);
         setValue(tonetrace::ParameterId::CaptureSeconds, 0.0, true);
         break;
-      case 3:
+      }
+      case 3: {
         // Low confidence remains the normal quality threshold, but a capture
         // that filled the entire accepted-audio buffer must be allowed to
         // continue. The public status for this condition is explicitly
         // "Capture full; continue workflow"; rejecting Correct Target here
         // would make that fallback impossible. Confidence remains truthful at
         // zero so the user can judge the result with appropriate caution.
+        const auto currentPhase = phase_.load(std::memory_order_acquire);
         if (!tonetrace::targetCaptureCanCorrect(
-                phase_.load(std::memory_order_acquire),
-                target_.confidenceLevel, target_.overflowed,
+                currentPhase, target_.confidenceLevel, target_.overflowed,
                 importedTarget_.has_value())) {
           captureBlocked_ = true;
-          setWorkflowStep(2);
+          // Stay on Learn Target only when Target capture really exists. A
+          // stale/out-of-order host command must never make the selector claim
+          // a phase the engine did not reach.
+          setWorkflowStep(currentPhase == tonetrace::WorkflowPhase::CapturingTarget
+                              ? 2
+                              : workflowStepForCurrentPhase());
           startSweep(420.0, 180.0, 220.0);
           setStatus(Status::InvalidCapture);
           break;
@@ -1082,6 +1145,7 @@ class ToneTraceClap {
         controlBusy_.store(true, std::memory_order_release);
         requestMainThread(WorkAnalyze);
         break;
+      }
       case 4:
         if (hasProfile_.load(std::memory_order_acquire)) {
           phase_.store(tonetrace::WorkflowPhase::Frozen,
@@ -1089,7 +1153,7 @@ class ToneTraceClap {
           setStatus(Status::Frozen);
           stopTones();
         } else {
-          setWorkflowStep(3);
+          setWorkflowStep(workflowStepForCurrentPhase());
           setStatus(Status::InvalidCapture);
         }
         break;
@@ -1102,22 +1166,26 @@ class ToneTraceClap {
         resetArmed_.store(true, std::memory_order_release);
         break;
       case 6:
-        if (resetArmed_.exchange(false, std::memory_order_acq_rel)) {
-          stopTones();
-          setStatus(Status::Analyzing);
-          controlBusy_.store(true, std::memory_order_release);
-          requestMainThread(WorkReset);
+        if (resetArmed_.load(std::memory_order_acquire)) {
+          (void)beginConfirmedReset();
         }
         break;
       case 7:
         if (resetArmed_.exchange(false, std::memory_order_acq_rel)) {
           const auto previous = phaseBeforeReset_.load(std::memory_order_acquire);
           phase_.store(previous, std::memory_order_release);
+          setWorkflowStep(workflowStepForCurrentPhase());
           setStatus(previous == tonetrace::WorkflowPhase::Frozen
                         ? Status::Frozen
-                        : (hasProfile_.load(std::memory_order_acquire)
-                               ? Status::Preview
-                               : Status::Ready));
+                        : previous == tonetrace::WorkflowPhase::CapturingReference
+                              ? captureStatus(previous, reference_.confidenceLevel,
+                                              reference_)
+                              : previous == tonetrace::WorkflowPhase::CapturingTarget
+                                    ? captureStatus(previous, target_.confidenceLevel,
+                                                    target_)
+                                    : (hasProfile_.load(std::memory_order_acquire)
+                                           ? Status::Preview
+                                           : Status::Ready));
         }
         break;
       default:
@@ -1154,9 +1222,8 @@ class ToneTraceClap {
     const std::size_t index = parameterIndex(id);
     if (index >= descriptors.size()) return false;
     if (descriptors[index].readOnly) {
-      // A read-only value cannot be written; reflect the authoritative value
-      // back to the host.
-      markDirty(index);
+      // Internal telemetry is hidden from the host and never participates in
+      // its parameter event stream. A host write is simply rejected.
       return false;
     }
     const auto parameterId = descriptors[index].id;
@@ -1180,11 +1247,15 @@ class ToneTraceClap {
       // to reach the next phase. Commands fire only when the step changes.
       const int step = static_cast<int>(newValue);
       const int previous = lastWorkflowStep_.load(std::memory_order_acquire);
-      if (step != previous) {
+      if (step == 0) {
+        // A deliberate move back to Ready/No action cancels anything that was
+        // queued earlier in the same host event batch. Without this, a stale
+        // Save/Learn command can execute after the user has already moved back.
+        pendingWorkflowCommand_.store(0, std::memory_order_release);
+        lastWorkflowStep_.store(0, std::memory_order_release);
+      } else if (step != previous) {
         lastWorkflowStep_.store(step, std::memory_order_release);
-        if (step != 0) {
-          pendingWorkflowCommand_.store(step, std::memory_order_release);
-        }
+        pendingWorkflowCommand_.store(step, std::memory_order_release);
       }
     } else if (parameterId == tonetrace::ParameterId::MatchMode) {
       if (hasProfile_.load(std::memory_order_acquire)) {
@@ -1826,6 +1897,7 @@ class ToneTraceClap {
         setValue(tonetrace::ParameterId::Confidence, 0.0, true);
         setValue(tonetrace::ParameterId::CurveDriftDb, 60.0, true);
         setValue(tonetrace::ParameterId::CaptureSeconds, 0.0, true);
+        setWorkflowStep(0);
         setStatus(Status::Ready);
       }
       if ((work & WorkAnalyze) != 0U) {
@@ -2252,6 +2324,17 @@ class ToneTraceClap {
     instance->applyEditorParameter(static_cast<clap_id>(paramId), value);
   }
 
+  static void editorResetConfirmed(void* context) noexcept {
+    auto* instance = static_cast<ToneTraceClap*>(context);
+    if (instance == nullptr) return;
+    instance->setValue(tonetrace::ParameterId::LastCommand, 6.0, true);
+    instance->setWorkflowStep(6);
+    if (!instance->beginConfirmedReset()) {
+      instance->setWorkflowStep(instance->workflowStepForCurrentPhase());
+    }
+    instance->requestHostParameterFlush();
+  }
+
   static void editorPlayTraceTone(void* context,
                                   double frequencyHz) noexcept {
     auto* instance = static_cast<ToneTraceClap*>(context);
@@ -2347,8 +2430,8 @@ class ToneTraceClap {
       };
       auto editor = std::make_unique<ToneTraceWin32Editor>(
           plugin, &params, instance, editorGetSnapshot, editorGetStagedSpectrum,
-          editorSetParameter, editorPlayTraceTone, editorPlayBandSweep,
-          editorSetBandGain,
+          editorSetParameter, editorResetConfirmed, editorPlayTraceTone,
+          editorPlayBandSweep, editorSetBandGain,
           editorGetBandGain, editorGetBandCount, editorSetImportedSpectrum,
           editorSetImportedModel, editorGetSampleRate);
       if (!editor->create()) return false;
@@ -2507,7 +2590,9 @@ class ToneTraceClap {
     std::memset(info, 0, sizeof(*info));
     info->id = static_cast<clap_id>(descriptor.id);
     if (descriptor.stepped) info->flags |= CLAP_PARAM_IS_STEPPED;
-    if (descriptor.readOnly) info->flags |= CLAP_PARAM_IS_READONLY;
+    if (descriptor.readOnly) {
+      info->flags |= CLAP_PARAM_IS_READONLY | CLAP_PARAM_IS_HIDDEN;
+    }
     if (descriptor.automatable) info->flags |= CLAP_PARAM_IS_AUTOMATABLE;
     if (descriptor.id == tonetrace::ParameterId::Bypass) {
       info->flags |= CLAP_PARAM_IS_BYPASS;

@@ -65,12 +65,16 @@ constexpr int kDescribeId = 104;
 constexpr int kTraceId = 105;
 constexpr int kExportId = 106;
 constexpr int kImportId = 107;
+constexpr int kOptionsId = 108;
 constexpr int kModeComboId = 200;
 constexpr int kModeLabelId = 201;
 constexpr int kDescriptionLabelId = 202;
 constexpr int kDescriptionEditId = 203;
 constexpr int kResolutionLabelId = 204;
 constexpr int kResolutionComboId = 205;
+constexpr int kStatusLabelId = 206;
+constexpr int kStatusEditId = 207;
+constexpr int kReadoutEditId = 208;
 constexpr int kEditFirstId = 300;
 constexpr int kTabControlId = 50;
 constexpr int kBandSliderFirstId = 2000;
@@ -246,7 +250,7 @@ class ToneTraceWin32Editor::Impl {
  public:
   Impl(const clap_plugin_t* plugin, const clap_plugin_params_t* params,
        void* context, GetSnapshotFn getSnapshot,
-       GetStagedSpectrumFn getStagedSpectrum, SetParamFn setParam,
+       GetStagedSpectrumFn getStagedSpectrum, SetParamFn setParam, ResetFn reset,
        PlayToneFn playTone, PlayBandSweepFn playBandSweep,
        SetBandGainFn setBandGain, GetBandGainFn getBandGain,
        GetBandCountFn getBandCount, SetImportedSpectrumFn setImportedSpectrum,
@@ -254,7 +258,7 @@ class ToneTraceWin32Editor::Impl {
        RefreshFn refresh)
       : plugin_(plugin), params_(params), context_(context),
         getSnapshot_(getSnapshot), getStagedSpectrum_(getStagedSpectrum),
-        setParam_(setParam), playTone_(playTone),
+        setParam_(setParam), reset_(reset), playTone_(playTone),
         playBandSweep_(playBandSweep), setBandGain_(setBandGain),
         getBandGain_(getBandGain), getBandCount_(getBandCount),
         setImportedSpectrum_(setImportedSpectrum),
@@ -489,7 +493,7 @@ class ToneTraceWin32Editor::Impl {
 
   RECT canvasRect() const {
     const int margin = px(10);
-    const int strip = px(168);
+    const int strip = px(190);
     // The plot starts below the tab strip and the readout row so curves never
     // run underneath them.
     RECT rect{margin, tabStripRect().bottom + margin + px(24) + margin,
@@ -519,7 +523,7 @@ class ToneTraceWin32Editor::Impl {
 
   RECT descriptionRect() const {
     const int margin = px(10);
-    const int strip = px(168);
+    const int strip = px(190);
     const int width = clientWidth();
     const int panelWidth =
         std::max(px(300), (width - margin * 2) * 2 / 5);
@@ -594,6 +598,10 @@ class ToneTraceWin32Editor::Impl {
   void onCommand(int id, int notificationCode, HWND source);
   void applyEdit(int editIndex);
   void copyDescriptionToClipboard();
+  void showOptionsDialog();
+  static INT_PTR CALLBACK optionsDialogProc(HWND hwnd, UINT message,
+                                             WPARAM wParam, LPARAM lParam);
+  bool applyOptionsDialog(HWND dialog);
   void showTransferMenu(bool exportMenu);
   void exportCurve(int menuId);
   void importCurve(int menuId);
@@ -630,6 +638,7 @@ class ToneTraceWin32Editor::Impl {
   GetSnapshotFn getSnapshot_;
   GetStagedSpectrumFn getStagedSpectrum_;
   SetParamFn setParam_;
+  ResetFn reset_;
   PlayToneFn playTone_;
   PlayBandSweepFn playBandSweep_;
   SetBandGainFn setBandGain_;
@@ -644,6 +653,7 @@ class ToneTraceWin32Editor::Impl {
   HWND parent_ = nullptr;
   HWND reaperWrapper_ = nullptr;
   HWND tabControl_ = nullptr;
+  HWND statusLabel_ = nullptr;
   HWND statusEdit_ = nullptr;
   HWND readoutEdit_ = nullptr;
   HWND descriptionLabel_ = nullptr;
@@ -653,6 +663,7 @@ class ToneTraceWin32Editor::Impl {
   HWND resolutionLabel_ = nullptr;
   HWND resolutionCombo_ = nullptr;
   HWND traceButton_ = nullptr;
+  HWND optionsButton_ = nullptr;
   HWND tooltip_ = nullptr;
   struct TracePage {
     int firstBand = 0;
@@ -669,6 +680,8 @@ class ToneTraceWin32Editor::Impl {
   std::vector<HWND> editControls_;
   std::vector<HWND> editLabels_;
   std::wstring lastDescriptionText_;
+  std::wstring lastStatusMeaningfulKey_;
+  std::uint64_t lastStatusTelemetryTicks_ = 0;
   UINT_PTR traceAnnounceTimer_ = 0;
   double scale_ = 1.0;
   std::uint32_t requestedWidth_ = 0;
@@ -1055,7 +1068,8 @@ LRESULT CALLBACK ToneTraceWin32Editor::Impl::keyForwardProc(
     // trap keyboard users inside the box. Drop that claim so Tab flows on
     // through the dialog manager; arrows keep scrolling the text.
     if (impl != nullptr &&
-        (hwnd == impl->descriptionEdit_ || hwnd == impl->readoutEdit_)) {
+        (hwnd == impl->descriptionEdit_ || hwnd == impl->readoutEdit_ ||
+         hwnd == impl->statusEdit_)) {
       return (code & ~static_cast<LRESULT>(DLGC_WANTALLKEYS)) |
              DLGC_WANTARROWS;
     }
@@ -1123,7 +1137,8 @@ void ToneTraceWin32Editor::Impl::drawButton(const DRAWITEMSTRUCT& item) {
 
   const int id = static_cast<int>(item.CtlID);
   const bool workflow = id >= kCaptureReferenceId && id <= kFreezeId;
-  const bool utility = id == kDescribeId || id == kExportId || id == kImportId;
+  const bool utility = id == kDescribeId || id == kExportId ||
+                       id == kImportId || id == kOptionsId;
   if (!workflow && !utility) return;
 
   const bool disabled = (item.itemState & ODS_DISABLED) != 0;
@@ -1292,28 +1307,28 @@ void ToneTraceWin32Editor::Impl::setTabOrder() {
                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
   };
-  // Desired tab order (first to last):
-  //   Capture Reference, Learn Target, Correct Target, Freeze Correction,
-  //   Match Mode, Correction Resolution, Trace Curve, labeled edits, Status,
-  //   Readout, Description, Copy Curve Description.
-  // The copy button sits directly after the box it copies, so a keyboard user
-  // can read the description then copy it without hunting.
-  // workflowButtons_ creation order is 0=Capture, 1=Learn, 2=Correct,
-  // 3=Freeze, 4=Copy, 5=Export, 6=Import. Each label is placed directly above
-  // its edit so screen readers associate it with the control.
-  auto topWorkflow = [&](std::size_t index) {
-    if (index < workflowButtons_.size()) moveTop(workflowButtons_[index]);
+  const auto buttonById = [&](int id) -> HWND {
+    for (HWND button : workflowButtons_) {
+      if (button != nullptr && GetDlgCtrlID(button) == id) return button;
+    }
+    return nullptr;
   };
-  topWorkflow(6);  // Import Curve (last stop)
-  topWorkflow(5);  // Export Curve
-  topWorkflow(4);  // Copy Curve Description
+
+  // Desired Match-page tab order (first to last):
+  // Capture Reference, Learn Target, Correct Target, Freeze Correction,
+  // Match Mode, Trace Curve, Options, labeled exact-value edits, Status,
+  // Readout, Curve Description, Copy Description, Export, Import.
+  // Static labels are deliberately placed immediately before the native
+  // control they name in Z-order so MSAA/UIA and sighted users receive the
+  // same label.
+  moveTop(buttonById(kImportId));
+  moveTop(buttonById(kExportId));
+  moveTop(buttonById(kDescribeId));
   moveTop(descriptionEdit_);
-  // A real STATIC immediately before the EDIT in Z-order gives the native
-  // edit a stable MSAA/UIA name. Painted text cannot label a control, and left
-  // the description box borrowing an unrelated neighboring name in NVDA.
   moveTop(descriptionLabel_);
   moveTop(readoutEdit_);
   moveTop(statusEdit_);
+  moveTop(statusLabel_);
   for (int index = static_cast<int>(editControls_.size()) - 1; index >= 0;
        --index) {
     moveTop(editControls_[index]);
@@ -1321,17 +1336,14 @@ void ToneTraceWin32Editor::Impl::setTabOrder() {
       moveTop(editLabels_[index]);
     }
   }
+  moveTop(optionsButton_);
   moveTop(traceButton_);
-  moveTop(resolutionCombo_);
-  moveTop(resolutionLabel_);
   moveTop(modeCombo_);
   moveTop(modeLabel_);
-  topWorkflow(3);  // Freeze
-  topWorkflow(2);  // Correct
-  topWorkflow(1);  // Learn
-  topWorkflow(0);  // Capture Reference (first stop)
-  // The tab strip comes before every page control so a keyboard user reaches
-  // the page selector first, then the page's controls.
+  moveTop(buttonById(kFreezeId));
+  moveTop(buttonById(kCorrectTargetId));
+  moveTop(buttonById(kLearnTargetId));
+  moveTop(buttonById(kCaptureReferenceId));
   moveTop(tabControl_);
 }
 
@@ -1368,6 +1380,7 @@ bool ToneTraceWin32Editor::Impl::recreateFonts() {
     }
   };
   apply(tabControl_, font_);
+  apply(statusLabel_, smallFont_);
   apply(statusEdit_, font_);
   apply(readoutEdit_, font_);
   apply(descriptionLabel_, smallFont_);
@@ -1377,6 +1390,7 @@ bool ToneTraceWin32Editor::Impl::recreateFonts() {
   apply(resolutionLabel_, smallFont_);
   apply(resolutionCombo_, font_);
   apply(traceButton_, font_);
+  apply(optionsButton_, font_);
   for (HWND control : workflowButtons_) apply(control, font_);
   for (HWND control : editControls_) apply(control, font_);
   for (HWND label : editLabels_) apply(label, smallFont_);
@@ -1561,6 +1575,20 @@ bool ToneTraceWin32Editor::Impl::createChildren() {
                       L"Audition the curve by moving through its band centers.");
   }
 
+  optionsButton_ = CreateWindowExW(
+      0, L"BUTTON", L"Options...",
+      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+      0, 0, 4, 4, window_,
+      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kOptionsId)), instance,
+      nullptr);
+  if (optionsButton_ != nullptr) {
+    SendMessageW(optionsButton_, WM_SETFONT,
+                 reinterpret_cast<WPARAM>(font_), FALSE);
+    setSubclass(optionsButton_, &Impl::keyForwardProc);
+    addControlTooltip(tooltip_, window_, optionsButton_,
+                      L"Global correction, tone, bypass, and reset options.");
+  }
+
   for (std::size_t index = 0; index < std::size(kEditedParams); ++index) {
     HWND edit = CreateWindowExW(
         WS_EX_CLIENTEDGE, L"EDIT", L"",
@@ -1599,10 +1627,23 @@ bool ToneTraceWin32Editor::Impl::createChildren() {
     }
   }
 
+  statusLabel_ = CreateWindowExW(
+      WS_EX_TRANSPARENT, L"STATIC", L"Status",
+      WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
+      0, 0, 4, 4, window_,
+      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusLabelId)), instance,
+      nullptr);
+  if (statusLabel_ != nullptr) {
+    SendMessageW(statusLabel_, WM_SETFONT,
+                 reinterpret_cast<WPARAM>(smallFont_), FALSE);
+  }
+
   statusEdit_ = CreateWindowExW(
       0, L"EDIT", L"",
-      WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_READONLY | ES_AUTOHSCROLL,
-      0, 0, 4, 4, window_, nullptr, instance, nullptr);
+      WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_READONLY | ES_MULTILINE,
+      0, 0, 4, 4, window_,
+      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusEditId)), instance,
+      nullptr);
   if (statusEdit_ != nullptr) {
     SendMessageW(statusEdit_, WM_SETFONT,
                  reinterpret_cast<WPARAM>(font_), FALSE);
@@ -1612,7 +1653,9 @@ bool ToneTraceWin32Editor::Impl::createChildren() {
   readoutEdit_ = CreateWindowExW(
       0, L"EDIT", L"",
       WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_READONLY | ES_MULTILINE,
-      0, 0, 4, 4, window_, nullptr, instance, nullptr);
+      0, 0, 4, 4, window_,
+      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kReadoutEditId)), instance,
+      nullptr);
   if (readoutEdit_ != nullptr) {
     SendMessageW(readoutEdit_, WM_SETFONT,
                  reinterpret_cast<WPARAM>(font_), FALSE);
@@ -1846,9 +1889,13 @@ void ToneTraceWin32Editor::Impl::layoutChildren() {
     x += editWidth + px(6);
   }
 
-  const int statusY = bottom - px(156);
+  const int statusLabelY = bottom - px(188);
+  const int statusY = statusLabelY + px(16);
+  SetWindowPos(statusLabel_, nullptr, margin, statusLabelY,
+               std::max(px(200), width - margin * 2), px(16),
+               SWP_NOACTIVATE | SWP_NOZORDER);
   SetWindowPos(statusEdit_, nullptr, margin, statusY,
-               std::max(px(200), width - margin * 2), px(24),
+               std::max(px(200), width - margin * 2), px(48),
                SWP_NOACTIVATE | SWP_NOZORDER);
 
   const RECT description = descriptionRect();
@@ -1868,12 +1915,14 @@ void ToneTraceWin32Editor::Impl::layoutChildren() {
   // as the other buttons.
   const int readoutY = tabStrip.bottom + margin;
   const int traceWidth = px(126);
+  const int optionsWidth = px(92);
   const int controlGap = px(8);
   const int resolutionWidth = px(150);
   const int traceX = width - margin - traceWidth;
+  const int optionsX = traceX - controlGap - optionsWidth;
   const int resolutionX = traceX - controlGap - resolutionWidth;
   const int readoutRight = selectedPage_ > 0 ? resolutionX - controlGap
-                                              : traceX - controlGap;
+                                              : optionsX - controlGap;
   const int readoutWidth = std::max(px(200), readoutRight - margin);
   const int readoutHeight = selectedPage_ > 0 ? px(42) : px(24);
   SetWindowPos(readoutEdit_, nullptr, margin, readoutY, readoutWidth,
@@ -1886,6 +1935,8 @@ void ToneTraceWin32Editor::Impl::layoutChildren() {
     SetWindowPos(traceButton_, nullptr, traceX, readoutY + px(9), traceWidth,
                  px(24), SWP_NOACTIVATE | SWP_NOZORDER);
   } else {
+    SetWindowPos(optionsButton_, nullptr, optionsX, readoutY, optionsWidth, px(24),
+                 SWP_NOACTIVATE | SWP_NOZORDER);
     SetWindowPos(traceButton_, nullptr, traceX, readoutY, traceWidth, px(24),
                  SWP_NOACTIVATE | SWP_NOZORDER);
   }
@@ -2288,16 +2339,49 @@ void ToneTraceWin32Editor::Impl::refreshStatus() {
   if (statusEdit_ == nullptr) return;
   const std::string status = paramText(tonetrace::ParameterId::Status);
   const std::string command = paramText(tonetrace::ParameterId::LastCommand);
-  std::wstring text = widen(status);
-  if (traceMode_) {
-    if (!text.empty()) text += L"  |  ";
-    text += L"Trace: ON - use Left/Right arrows to move bands, Home/End for the edges";
+  const std::string confidence = paramText(tonetrace::ParameterId::Confidence);
+  const std::string captureTime = paramText(tonetrace::ParameterId::CaptureSeconds);
+  const std::string drift = paramText(tonetrace::ParameterId::CurveDriftDb);
+  const int workflowStep = static_cast<int>(std::lround(
+      paramValue(tonetrace::ParameterId::WorkflowAction)));
+
+  // Status/confidence/command transitions are meaningful and refresh
+  // immediately. Continuously changing capture seconds and drift are visual
+  // telemetry, so limit those text updates to once per second. The native
+  // field stays reviewable/copyable without turning a screen reader into a
+  // one-second talking clock.
+  const std::wstring meaningfulKey = widen(status + "\n" + command + "\n" + confidence);
+  const std::uint64_t now = GetTickCount64();
+  const bool meaningfulChanged = meaningfulKey != lastStatusMeaningfulKey_;
+  if (!meaningfulChanged && lastStatusTelemetryTicks_ != 0 &&
+      now - lastStatusTelemetryTicks_ < 1000) {
+    return;
+  }
+
+  std::wstring text = L"Status: " + widen(status.empty() ? "Ready" : status);
+  const bool captureContext = workflowStep == 1 || workflowStep == 2 ||
+                              paramValue(tonetrace::ParameterId::CaptureSeconds) > 0.0;
+  if (captureContext) {
+    text += L"\r\nCapture time: " + widen(captureTime) +
+            L"  |  Confidence: " + widen(confidence) +
+            L"  |  Curve drift: " + widen(drift);
+  } else {
+    text += L"\r\nNo capture in progress";
   }
   if (!command.empty() && command != "No action") {
-    text += L"  |  Last: ";
-    text += widen(command);
+    text += L"  |  Last action: " + widen(command);
   }
-  (void)setWindowTextIfChanged(statusEdit_, text);
+  if (traceMode_) {
+    text += L"  |  Trace: On";
+  }
+
+  const bool changed = setWindowTextIfChanged(statusEdit_, text);
+  lastStatusMeaningfulKey_ = meaningfulKey;
+  lastStatusTelemetryTicks_ = now;
+  if (changed && meaningfulChanged) {
+    NotifyWinEvent(EVENT_OBJECT_VALUECHANGE, statusEdit_, OBJID_CLIENT,
+                   CHILDID_SELF);
+  }
 }
 
 void ToneTraceWin32Editor::Impl::refreshDescription() {
@@ -2380,6 +2464,95 @@ bool ToneTraceWin32Editor::Impl::chooseOpenPath(const wchar_t* filter,
   if (GetOpenFileNameW(&ofn) == 0) return false;
   path = buffer;
   return true;
+}
+
+INT_PTR CALLBACK ToneTraceWin32Editor::Impl::optionsDialogProc(
+    HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+  Impl* impl = reinterpret_cast<Impl*>(GetWindowLongPtrW(hwnd, DWLP_USER));
+  if (message == WM_INITDIALOG) {
+    impl = reinterpret_cast<Impl*>(lParam);
+    if (impl == nullptr) return FALSE;
+    SetWindowLongPtrW(hwnd, DWLP_USER, reinterpret_cast<LONG_PTR>(impl));
+    CheckDlgButton(hwnd, IDC_OPTION_FULL_CORRECTION,
+                   impl->paramValue(tonetrace::ParameterId::CompleteMatch) >= 0.5
+                       ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(hwnd, IDC_OPTION_TONE_NOTIFICATIONS,
+                   impl->paramValue(tonetrace::ParameterId::ToneNotifications) >= 0.5
+                       ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(hwnd, IDC_OPTION_BYPASS,
+                   impl->paramValue(tonetrace::ParameterId::Bypass) >= 0.5
+                       ? BST_CHECKED : BST_UNCHECKED);
+    SetDlgItemTextW(hwnd, IDC_OPTION_TONE_LEVEL,
+                    widen(impl->paramText(tonetrace::ParameterId::ToneLevelDb)).c_str());
+    if (impl->reset_ == nullptr) {
+      EnableWindow(GetDlgItem(hwnd, IDC_OPTION_RESET), FALSE);
+    }
+    return TRUE;
+  }
+  if (impl == nullptr) return FALSE;
+  if (message == WM_COMMAND) {
+    const int id = LOWORD(wParam);
+    if (id == IDOK) {
+      if (impl->applyOptionsDialog(hwnd)) EndDialog(hwnd, IDOK);
+      return TRUE;
+    }
+    if (id == IDCANCEL) {
+      EndDialog(hwnd, IDCANCEL);
+      return TRUE;
+    }
+    if (id == IDC_OPTION_RESET && HIWORD(wParam) == BN_CLICKED) {
+      const int answer = MessageBoxW(
+          hwnd,
+          L"Reset Tone Trace?\n\nThis clears the learned Reference/Target match "
+          L"and all manual band edits. This cannot be undone.",
+          L"Reset Tone Trace", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
+      if (answer == IDYES && impl->reset_ != nullptr) {
+        impl->reset_(impl->context_);
+        EndDialog(hwnd, IDOK);
+      }
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+bool ToneTraceWin32Editor::Impl::applyOptionsDialog(HWND dialog) {
+  if (dialog == nullptr || setParam_ == nullptr || params_ == nullptr ||
+      params_->text_to_value == nullptr) {
+    return false;
+  }
+  wchar_t toneText[128]{};
+  GetDlgItemTextW(dialog, IDC_OPTION_TONE_LEVEL, toneText,
+                  static_cast<int>(std::size(toneText)));
+  double toneLevel = 0.0;
+  const std::string narrowText = narrow(toneText);
+  if (!params_->text_to_value(plugin_,
+                              static_cast<clap_id>(tonetrace::ParameterId::ToneLevelDb),
+                              narrowText.c_str(), &toneLevel)) {
+    MessageBoxW(dialog,
+                L"Enter a Confidence Tone Volume in dB, or type Off.",
+                L"Tone Trace EQ Options", MB_OK | MB_ICONERROR);
+    SetFocus(GetDlgItem(dialog, IDC_OPTION_TONE_LEVEL));
+    return false;
+  }
+  const auto checked = [&](int id) {
+    return IsDlgButtonChecked(dialog, id) == BST_CHECKED ? 1.0 : 0.0;
+  };
+  setParam_(context_, static_cast<std::uint32_t>(tonetrace::ParameterId::CompleteMatch),
+            checked(IDC_OPTION_FULL_CORRECTION));
+  setParam_(context_, static_cast<std::uint32_t>(tonetrace::ParameterId::ToneNotifications),
+            checked(IDC_OPTION_TONE_NOTIFICATIONS));
+  setParam_(context_, static_cast<std::uint32_t>(tonetrace::ParameterId::ToneLevelDb),
+            toneLevel);
+  setParam_(context_, static_cast<std::uint32_t>(tonetrace::ParameterId::Bypass),
+            checked(IDC_OPTION_BYPASS));
+  return true;
+}
+
+void ToneTraceWin32Editor::Impl::showOptionsDialog() {
+  DialogBoxParamW(moduleInstance(), MAKEINTRESOURCEW(IDD_TONETRACE_OPTIONS),
+                  window_, &Impl::optionsDialogProc,
+                  reinterpret_cast<LPARAM>(this));
 }
 
 void ToneTraceWin32Editor::Impl::showTransferMenu(bool exportMenu) {
@@ -3190,6 +3363,8 @@ void ToneTraceWin32Editor::Impl::showTracePage(int page) {
   // The Trace checkbox stays on every page so the user can switch between
   // hearing band positions and editing band values from any tab.
   setVisible(traceButton_, true);
+  setVisible(optionsButton_, match);
+  setVisible(statusLabel_, match);
   setVisible(statusEdit_, match);
   // The readout is shown on every page: it announces the trace cursor on the
   // match page and the focused band's value (and page description) on the
@@ -3378,6 +3553,10 @@ void ToneTraceWin32Editor::Impl::onCommand(int id, int notificationCode,
       if (notificationCode != BN_CLICKED) return;
       showTransferMenu(false);
       return;
+    case kOptionsId:
+      if (notificationCode != BN_CLICKED) return;
+      showOptionsDialog();
+      return;
     default:
       break;
   }
@@ -3454,7 +3633,7 @@ void ToneTraceWin32Editor::Impl::applyEdit(int editIndex) {
 ToneTraceWin32Editor::ToneTraceWin32Editor(
     const clap_plugin_t* plugin, const clap_plugin_params_t* params,
     void* context, GetSnapshotFn getSnapshot,
-    GetStagedSpectrumFn getStagedSpectrum, SetParamFn setParam,
+    GetStagedSpectrumFn getStagedSpectrum, SetParamFn setParam, ResetFn reset,
     PlayToneFn playTone, PlayBandSweepFn playBandSweep,
     SetBandGainFn setBandGain, GetBandGainFn getBandGain,
     GetBandCountFn getBandCount, SetImportedSpectrumFn setImportedSpectrum,
@@ -3462,7 +3641,7 @@ ToneTraceWin32Editor::ToneTraceWin32Editor(
     RefreshFn refresh)
     : impl_(std::make_unique<Impl>(
           plugin, params, context, getSnapshot, getStagedSpectrum, setParam,
-          playTone,
+          reset, playTone,
           playBandSweep, setBandGain, getBandGain, getBandCount,
           setImportedSpectrum, setImportedModel, getSampleRate, refresh)) {}
 

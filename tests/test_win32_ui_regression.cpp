@@ -34,14 +34,28 @@ constexpr int kDescribeId = 104;
 constexpr int kTraceId = 105;
 constexpr int kExportId = 106;
 constexpr int kImportId = 107;
+constexpr int kOptionsId = 108;
 constexpr int kModeComboId = 200;
 constexpr int kModeLabelId = 201;
 constexpr int kResolutionLabelId = 204;
 constexpr int kResolutionComboId = 205;
+constexpr int kStatusLabelId = 206;
+constexpr int kStatusEditId = 207;
+constexpr int kReadoutEditId = 208;
 constexpr int kEditFirstId = 300;
 constexpr int kEmergencyGuardEditId = kEditFirstId + 3;
 constexpr int kExportIrMenuId = 600;
 constexpr int kBandSliderFirstId = 2000;
+constexpr clap_id kFullCorrectionParam = 170;
+constexpr clap_id kToneNotificationsParam = 240;
+constexpr clap_id kToneLevelParam = 250;
+constexpr clap_id kBypassParam = 260;
+constexpr int kOptionFullCorrectionId = 1100;
+constexpr int kOptionToneNotificationsId = 1101;
+constexpr int kOptionToneLevelLabelId = 1102;
+constexpr int kOptionToneLevelId = 1103;
+constexpr int kOptionBypassId = 1104;
+constexpr int kOptionResetId = 1105;
 
 void require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
@@ -218,6 +232,100 @@ void setParameter(const clap_plugin_t* plugin, clap_id id, double value) {
   input.add(id, value);
   params->flush(plugin, &input.iface, nullptr);
   plugin->on_main_thread(plugin);
+}
+
+struct OptionsObservation {
+  bool found = false;
+  bool controlsPresent = false;
+  bool toneLabelCorrect = false;
+  bool resetLabelCorrect = false;
+  bool tabOrderCorrect = false;
+};
+
+void verifyOptionsDialog(const clap_plugin_t* plugin, HWND editor) {
+  OptionsObservation observation;
+  const DWORD guiThread = GetWindowThreadProcessId(editor, nullptr);
+  std::thread inspector([&] {
+    HWND dialog = nullptr;
+    for (int attempt = 0; attempt < 300 && dialog == nullptr; ++attempt) {
+      EnumThreadWindows(
+          guiThread,
+          [](HWND candidate, LPARAM context) -> BOOL {
+            if (textOf(candidate) == L"Tone Trace EQ Options") {
+              *reinterpret_cast<HWND*>(context) = candidate;
+              return FALSE;
+            }
+            return TRUE;
+          },
+          reinterpret_cast<LPARAM>(&dialog));
+      if (dialog == nullptr) Sleep(10);
+    }
+    if (dialog == nullptr) return;
+    observation.found = true;
+
+    HWND full = GetDlgItem(dialog, kOptionFullCorrectionId);
+    HWND tones = GetDlgItem(dialog, kOptionToneNotificationsId);
+    HWND toneLabel = GetDlgItem(dialog, kOptionToneLevelLabelId);
+    HWND toneLevel = GetDlgItem(dialog, kOptionToneLevelId);
+    HWND bypass = GetDlgItem(dialog, kOptionBypassId);
+    HWND reset = GetDlgItem(dialog, kOptionResetId);
+    observation.controlsPresent =
+        full && tones && toneLabel && toneLevel && bypass && reset;
+    if (!observation.controlsPresent) {
+      PostMessageW(dialog, WM_CLOSE, 0, 0);
+      return;
+    }
+    observation.toneLabelCorrect =
+        textOf(toneLabel) == L"Confidence Tone Volume" &&
+        GetWindow(toneLevel, GW_HWNDPREV) == toneLabel;
+    observation.resetLabelCorrect = textOf(reset) == L"Reset Tone Trace...";
+    observation.tabOrderCorrect =
+        GetNextDlgTabItem(dialog, full, FALSE) == tones &&
+        GetNextDlgTabItem(dialog, tones, FALSE) == toneLevel &&
+        GetNextDlgTabItem(dialog, toneLevel, FALSE) == bypass &&
+        GetNextDlgTabItem(dialog, bypass, FALSE) == reset;
+
+    CheckDlgButton(dialog, kOptionFullCorrectionId, BST_CHECKED);
+    CheckDlgButton(dialog, kOptionToneNotificationsId, BST_UNCHECKED);
+    SetWindowTextW(toneLevel, L"-30");
+    CheckDlgButton(dialog, kOptionBypassId, BST_CHECKED);
+    PostMessageW(dialog, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED),
+                 reinterpret_cast<LPARAM>(GetDlgItem(dialog, IDOK)));
+  });
+
+  SendMessageW(editor, WM_COMMAND, MAKEWPARAM(kOptionsId, BN_CLICKED),
+               reinterpret_cast<LPARAM>(GetDlgItem(editor, kOptionsId)));
+  inspector.join();
+  require(observation.found, "Options button did not open its native dialog");
+  require(observation.controlsPresent,
+          "Options dialog is missing a global control");
+  require(observation.toneLabelCorrect,
+          "Confidence Tone Volume lacks a visible adjacent label");
+  require(observation.resetLabelCorrect,
+          "Options dialog does not expose the native Reset route");
+  require(observation.tabOrderCorrect,
+          "Options dialog keyboard order does not follow its visible controls");
+
+  const auto* params = static_cast<const clap_plugin_params_t*>(
+      plugin->get_extension(plugin, CLAP_EXT_PARAMS));
+  const auto valueOf = [&](clap_id id) {
+    double value = -999.0;
+    require(params != nullptr && params->get_value(plugin, id, &value),
+            "Options test could not read a parameter");
+    return value;
+  };
+  require(valueOf(kFullCorrectionParam) == 1.0 &&
+              valueOf(kToneNotificationsParam) == 0.0 &&
+              std::abs(valueOf(kToneLevelParam) + 30.0) < 1.0e-9 &&
+              valueOf(kBypassParam) == 1.0,
+          "Options dialog did not apply the same public parameters as the host");
+
+  // Restore normal defaults before the rest of the UI/audio harness runs.
+  setParameter(plugin, kFullCorrectionParam, 0.0);
+  setParameter(plugin, kToneNotificationsParam, 1.0);
+  setParameter(plugin, kToneLevelParam, -12.0);
+  setParameter(plugin, kBypassParam, 0.0);
+  pumpMessages();
 }
 
 std::wstring tabItemText(HWND tabs, int index) {
@@ -403,6 +511,25 @@ void feedSeconds(const clap_plugin_t* plugin, double seconds,
   }
 }
 
+void verifyNativeStatusDuringCapture(const clap_plugin_t* plugin, HWND editor) {
+  require(plugin->start_processing(plugin),
+          "status-panel capture could not start processing");
+  feedSeconds(plugin, 0.8, 1, 0.4);
+  Sleep(40);
+  pumpMessages();
+
+  HWND status = GetDlgItem(editor, kStatusEditId);
+  require(status != nullptr, "native Status panel is missing during capture");
+  const std::wstring text = textOf(status);
+  require(text.find(L"Status:") != std::wstring::npos &&
+              text.find(L"Capture time:") != std::wstring::npos &&
+              text.find(L"Confidence:") != std::wstring::npos &&
+              text.find(L"Curve drift:") != std::wstring::npos &&
+              text.find(L"Last action: Capture Reference") != std::wstring::npos,
+          "native Status panel does not expose complete live capture telemetry");
+  plugin->stop_processing(plugin);
+}
+
 void commitCorrectionProfile(const clap_plugin_t* plugin) {
   // The pre-profile band test queues the same main-thread rebuild callback a
   // real host would service. Drain it before capture so this neutral harness's
@@ -445,9 +572,14 @@ void verifyKnownGoodKeyboardBaseline(HWND editor) {
   HWND modeLabel = GetDlgItem(editor, kModeLabelId);
   HWND mode = GetDlgItem(editor, kModeComboId);
   HWND trace = GetDlgItem(editor, kTraceId);
+  HWND options = GetDlgItem(editor, kOptionsId);
+  HWND statusLabel = GetDlgItem(editor, kStatusLabelId);
+  HWND status = GetDlgItem(editor, kStatusEditId);
+  HWND readout = GetDlgItem(editor, kReadoutEditId);
+  HWND description = GetDlgItem(editor, 203);
 
   require(tabs && capture && learn && correct && freeze && modeLabel && mode &&
-              trace,
+              trace && options && statusLabel && status && readout && description,
           "Match-page keyboard controls are incomplete");
   require(textOf(modeLabel) == L"Match Mode" &&
               GetWindow(mode, GW_HWNDPREV) == modeLabel,
@@ -459,7 +591,8 @@ void verifyKnownGoodKeyboardBaseline(HWND editor) {
   requireNextTab(editor, correct, false, kFreezeId, "Correct -> Freeze");
   requireNextTab(editor, freeze, false, kModeComboId, "Freeze -> Match Mode");
   requireNextTab(editor, mode, false, kTraceId, "Match Mode -> Trace");
-  requireNextTab(editor, trace, false, kEditFirstId, "Trace -> first value");
+  requireNextTab(editor, trace, false, kOptionsId, "Trace -> Options");
+  requireNextTab(editor, options, false, kEditFirstId, "Options -> first value");
 
   requireNextTab(editor, capture, true, kTabControlId,
                  "Shift+Tab Capture -> tabs");
@@ -473,6 +606,23 @@ void verifyKnownGoodKeyboardBaseline(HWND editor) {
       requireNextTab(editor, edit, false, id + 1, "value edit ordering");
     }
   }
+
+  requireNextTab(editor, GetDlgItem(editor, kEditFirstId + 6), false,
+                 kStatusEditId, "last value -> Status");
+  requireNextTab(editor, status, false, kReadoutEditId, "Status -> Readout");
+  requireNextTab(editor, readout, false, 203, "Readout -> Curve Description");
+  requireNextTab(editor, description, false, kDescribeId,
+                 "Curve Description -> Copy Description");
+  requireNextTab(editor, GetDlgItem(editor, kDescribeId), false, kExportId,
+                 "Copy Description -> Export");
+  requireNextTab(editor, GetDlgItem(editor, kExportId), false, kImportId,
+                 "Export -> Import");
+
+  require(textOf(statusLabel) == L"Status" &&
+              GetWindow(status, GW_HWNDPREV) == statusLabel,
+          "Status does not have a visible adjacent native label");
+  require(textOf(status).find(L"Status:") != std::wstring::npos,
+          "native Status panel does not display the current status");
 
   // Correction Gain is edit 302; the safety guard must immediately follow it
   // as edit 303, with its visible STATIC label directly above the same field.
@@ -763,6 +913,8 @@ void verifyBandMouseAndKeyboard(HWND editor) {
   require(tabs && resolution && trace && first && second,
           "first Bands-page controls missing");
   require(IsWindowVisible(first) != FALSE, "first band is not visible");
+  require(IsWindowVisible(GetDlgItem(editor, kOptionsId)) == FALSE,
+          "Match-page Options button leaked onto a Bands page");
 
   wchar_t cls[64]{};
   GetClassNameW(first, cls, static_cast<int>(std::size(cls)));
@@ -1135,9 +1287,11 @@ void run(const char* path) {
     require(editor != nullptr, "could not locate editor HWND");
 
     verifyKnownGoodKeyboardBaseline(editor);
+    verifyOptionsDialog(instance.plugin, editor);
     verifyResolutionTabRefresh(instance.plugin, editor);
     verifyFlatExportError(editor);
     verifyManualBandBeforeProfile(editor);
+    verifyNativeStatusDuringCapture(instance.plugin, editor);
     commitCorrectionProfile(instance.plugin);
     verifyBandMouseAndKeyboard(editor);
     reportLayoutMeasurements(editor, [&]{ RECT c{}; GetClientRect(editor, &c); return c; }(), 1.0, "default size, Bands page 1");

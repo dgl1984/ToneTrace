@@ -6,10 +6,11 @@ engine.
 
 ## Principles
 
-1. **The CLAP parameter surface stays authoritative.** The GUI is a thin native
-   shell. Every value it shows is read through `clap_plugin_params_t`; every
-   edit it makes goes through the same set-value path the host uses. There is no
-   second source of truth.
+1. **One product, one control contract.** Writable DSP/workflow controls use the
+   same CLAP set-value path whether they originate in the native editor or the
+   host. Live Status/Confidence/Drift/Time are internal read-only telemetry, not
+   automation. The native Status panel is their supported human-facing surface.
+   There is no accessibility-only alternate feature set.
 2. **Painted is not accessible.** Everything drawn on the canvas is visual only.
    The screen-reader surface is a set of native Win32 controls, most importantly
    a **readonly description box** that describes the curves in words.
@@ -62,7 +63,8 @@ Canvas interactions:
 | Match Mode | labeled COMBOBOX (named options) | Voice default; Full Mix / Voice / Drums / Bass+Synth / Custom |
 | Correction Resolution | labeled COMBOBOX on Bands pages | 1–120 bands; mirrors the host parameter and rebuilds the editable pages |
 | Range low / high, strength, correction ceiling, etc. | exact-value EDITs | Continuous params, committed on kill-focus |
-| Phase / status | READONLY EDIT | "Capturing Reference", "Frozen", etc. |
+| Status | labeled multiline READONLY EDIT | Workflow/status plus capture time, confidence, drift, and last action |
+| Options... | BUTTON + standard modal dialog | Full Correction Range, Tone Notifications, Confidence Tone Volume, Bypass, Reset |
 | Legend rows | per-curve STATIC+color swatch | Names each curve for tabbing |
 
 Rules from the OptiLab study applied here:
@@ -129,7 +131,8 @@ Rules from the OptiLab study applied here:
   explaining that it saves the captured Reference and then begins Target
   capture, while the host generic Workflow Step keeps the explicit
   **Save Reference and Learn Target** wording. A committed Reference can be
-  exported before a Target match is completed.
+  exported before a Target match is completed. Both routes use the same
+  workflow engine.
 - Tooltip registration uses the Windows `TTTOOLINFOW_V2_SIZE` contract. This
   keeps all eight action/control tooltips available in hosts with either legacy
   Common Controls or a version 6 manifest.
@@ -159,7 +162,9 @@ clap_plugin_t ── CLAP_EXT_GUI ──> ToneTraceWin32Editor
 ## Explicit non-goals
 
 - No editing of the curve directly on the canvas in v1 (params control it).
-- No state stored in the GUI; project state remains owned by the core.
-- The GUI must not change DSP behaviour, automation contract, or state format.
+- No project state is stored in the GUI; project state remains owned by the core.
+- Every host-visible writable control must have an equivalent native operation.
+- Live telemetry must not be made automatable merely to satisfy one accessibility route.
+- Visual, keyboard, MSAA/UIA, and host control must never disagree about the underlying state.
 - The whole editor compiles behind a build flag so the headless build stays
   bit-identical where a host never opens a window.
