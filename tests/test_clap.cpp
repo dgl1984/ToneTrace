@@ -656,7 +656,7 @@ void fullCaptureZeroConfidenceFallback(const clap_plugin_factory_t* factory,
           "full-capture fallback processing start failed");
   processParameter(instance.plugin, kMatchMode, 1.0);  // Voice: strictest confidence gate.
 
-  constexpr std::size_t referenceFrames = 48000;
+  constexpr std::size_t referenceFrames = 48000 * 4U;
   std::array<std::vector<float>, 2> reference{
       std::vector<float>(referenceFrames), std::vector<float>(referenceFrames)};
   for (std::size_t frame = 0; frame < referenceFrames; ++frame) {
@@ -755,9 +755,10 @@ void run(const char* modulePath,
                   info.default_value <= info.max_value,
               "invalid parameter descriptor");
       if ((info.flags & CLAP_PARAM_IS_READONLY) != 0) {
-        require((info.flags & CLAP_PARAM_IS_HIDDEN) != 0 &&
-                    (info.flags & CLAP_PARAM_IS_AUTOMATABLE) == 0,
-                "read-only telemetry is still exposed as host automation");
+        const bool status = info.id == kStatus;
+        require((info.flags & CLAP_PARAM_IS_AUTOMATABLE) == 0 &&
+                    (((info.flags & CLAP_PARAM_IS_HIDDEN) == 0) == status),
+                "read-only status/telemetry visibility contract is wrong");
       } else {
         require((info.flags & CLAP_PARAM_IS_AUTOMATABLE) != 0 &&
                     (info.flags & CLAP_PARAM_IS_HIDDEN) == 0,
@@ -782,7 +783,7 @@ void run(const char* modulePath,
       if ((info.flags & CLAP_PARAM_IS_HIDDEN) == 0) visibleIds.push_back(info.id);
     }
     const std::vector<clap_id> expectedVisibleOrder{
-        100, 110, 160, 170, 120, 130, 140, 150, 190, 180, 270, 250, 240, 260};
+        100, 230, 110, 160, 170, 120, 130, 140, 150, 190, 180, 270, 250, 240, 260};
     require(visibleIds == expectedVisibleOrder,
             "host-visible control order contains telemetry or lost a public control");
     char accessibleText[128]{};
@@ -797,6 +798,17 @@ void run(const char* modulePath,
                                                &parsedValue) &&
                 parsedValue == 1.0,
             "workflow labels are not round-trippable through the generic host interface");
+    require(instance.params->value_to_text(instance.plugin, kStatus, 27.0,
+                                           accessibleText,
+                                           sizeof(accessibleText)) &&
+                std::strcmp(accessibleText,
+                            "Reference not ready; keep capturing until confidence reaches Low") == 0 &&
+                instance.params->value_to_text(instance.plugin, kStatus, 30.0,
+                                               accessibleText,
+                                               sizeof(accessibleText)) &&
+                std::strcmp(accessibleText,
+                            "Target not ready; keep capturing until confidence reaches Low") == 0,
+            "host-visible Workflow Status does not explain rejected capture gates");
     require(instance.params->value_to_text(instance.plugin, kToneLevel, -60.0,
                                            accessibleText,
                                            sizeof(accessibleText)) &&
@@ -915,9 +927,9 @@ void run(const char* modulePath,
     processCommand(instance.plugin, 0);
     processCommand(instance.plugin, 1);
 
-    // Live capture telemetry is native-editor information, not automation. A
-    // normal accepted-audio block must not emit Status/Last/Confidence/Drift/Time
-    // parameter events to the host.
+    // High-frequency capture telemetry is native-editor information, not
+    // automation. Status is the one host-visible read-only field and may emit a
+    // meaningful transition; Last/Confidence/Drift/Time must never flood the host.
     {
       std::array<std::vector<float>, 2> telemetryInput{
           std::vector<float>(512, 0.05F), std::vector<float>(512, -0.05F)};
@@ -928,13 +940,12 @@ void run(const char* modulePath,
       require(std::none_of(telemetryEvents.events.begin(),
                            telemetryEvents.events.end(),
                            [](const auto& event) {
-                             return event.param_id == kStatus ||
-                                    event.param_id == kLastCommand ||
+                             return event.param_id == kLastCommand ||
                                     event.param_id == kConfidence ||
                                     event.param_id == kCurveDrift ||
                                     event.param_id == kCaptureTime;
                            }),
-              "live capture telemetry leaked into host parameter events");
+              "high-frequency capture telemetry leaked into host parameter events");
     }
 
     // A rapid host move 1 -> 2 -> 0 can place Save/Learn and Ready in the same
@@ -955,13 +966,12 @@ void run(const char* modulePath,
               "Ready/No action did not cancel a stale queued workflow command");
       require(std::none_of(responses.events.begin(), responses.events.end(),
                            [](const auto& event) {
-                             return event.param_id == kStatus ||
-                                    event.param_id == kLastCommand ||
+                             return event.param_id == kLastCommand ||
                                     event.param_id == kConfidence ||
                                     event.param_id == kCurveDrift ||
                                     event.param_id == kCaptureTime;
                            }),
-              "cancelled workflow batch still emitted hidden telemetry");
+              "cancelled workflow batch still emitted high-frequency telemetry");
     }
     processCommand(instance.plugin, 1);
     processParameter(instance.plugin, kToneLevel, -30.0);
@@ -986,7 +996,7 @@ void run(const char* modulePath,
     // has arrived a later 2 must be accepted without requiring the user to
     // first send another explicit 1. This is the real OSARA retry case.
     {
-      constexpr std::size_t retryFrames = 48000;
+      constexpr std::size_t retryFrames = 48000 * 4U;
       std::array<std::vector<float>, 2> retryReference{
           std::vector<float>(retryFrames), std::vector<float>(retryFrames)};
       for (std::size_t frame = 0; frame < retryFrames; ++frame) {
@@ -996,8 +1006,8 @@ void run(const char* modulePath,
         retryReference[1][frame] = sample;
       }
       processSignal(instance.plugin, retryReference);
-      require(instance.parameter(kCaptureTime) >= 0.35,
-              "retry fixture did not make Reference saveable");
+      require(instance.parameter(kConfidence) >= (1.0 / 3.0),
+              "retry fixture did not make Reference reach Low confidence");
       processCommand(instance.plugin, 2);
       require(instance.parameter(kWorkflow) == 2.0 &&
                   instance.parameter(kStatus) == 2.0,

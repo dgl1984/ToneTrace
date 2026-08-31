@@ -57,16 +57,23 @@ enum class WorkflowPhase : std::uint32_t {
   Frozen = 4,
 };
 
-// A normal live Target needs at least low confidence. If the accepted-audio
-// buffer is completely full, the user-facing contract explicitly allows the
-// workflow to continue while preserving a truthful zero-confidence reading.
+// A live capture can advance once it reaches at least Low confidence. If the
+// accepted-audio buffer is completely full, the workflow may also continue
+// while preserving a truthful zero-confidence reading. Reference and Target
+// use this same quality gate so native buttons and host/OSARA commands cannot
+// disagree about whether a capture is ready.
+[[nodiscard]] constexpr bool captureConfidenceAllowsAdvance(
+    int confidenceLevel, bool captureFull) noexcept {
+  return confidenceLevel >= 1 || captureFull;
+}
+
 [[nodiscard]] constexpr bool targetCaptureCanCorrect(WorkflowPhase phase,
                                                      int confidenceLevel,
                                                      bool captureFull,
                                                      bool importedTarget) noexcept {
   return importedTarget ||
          (phase == WorkflowPhase::CapturingTarget &&
-          (confidenceLevel >= 1 || captureFull));
+          captureConfidenceAllowsAdvance(confidenceLevel, captureFull));
 }
 
 enum class ProfileIssue : std::uint32_t {

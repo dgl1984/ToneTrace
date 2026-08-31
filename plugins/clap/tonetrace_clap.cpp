@@ -71,6 +71,7 @@ enum class Status : int {
   CannotSaveYet = 27,
   ImportedReference = 28,
   ImportedTarget = 29,
+  CannotCorrectYet = 30,
 };
 
 enum WorkFlags : std::uint32_t {
@@ -167,7 +168,7 @@ const char* statusText(int status) noexcept {
     case Status::ReferenceUnstable:
       return "Capturing Reference; unstable audio";
     case Status::ReferenceReady:
-      return "Reference capture ready";
+      return "Capturing Reference; stable; waiting for Low confidence";
     case Status::TargetAudioDetected:
       return "Learning Target; audio detected";
     case Status::TargetCollecting:
@@ -175,13 +176,15 @@ const char* statusText(int status) noexcept {
     case Status::TargetUnstable:
       return "Learning Target; unstable audio";
     case Status::TargetReady:
-      return "Target capture ready";
+      return "Learning Target; stable; waiting for Low confidence";
     case Status::CannotSaveYet:
-      return "Cannot save yet; keep capturing";
+      return "Reference not ready; keep capturing until confidence reaches Low";
     case Status::ImportedReference:
       return "Reference imported; record the Target or import one";
     case Status::ImportedTarget:
       return "Target imported; analyzing correction";
+    case Status::CannotCorrectYet:
+      return "Target not ready; keep capturing until confidence reaches Low";
     case Status::Ready:
     default: return "Ready";
   }
@@ -402,8 +405,8 @@ struct CaptureBuffer {
                : 0.0;
   }
 
-  [[nodiscard]] bool readyForSave(int sampleRate) const noexcept {
-    return validSeconds(sampleRate) >= 0.35 && updateCounter >= 3;
+  [[nodiscard]] bool readyToAdvance(int) const noexcept {
+    return tonetrace::captureConfidenceAllowsAdvance(confidenceLevel, overflowed);
   }
 
   [[nodiscard]] tonetrace::CaptureDiagnostics profileDiagnostics() const noexcept {
@@ -692,7 +695,8 @@ class ToneTraceClap {
   void markDirty(std::size_t index) noexcept {
     const auto& descriptors = tonetrace::parameterDescriptors();
     if (index >= dirtyValues_.size() || index >= descriptors.size() ||
-        descriptors[index].readOnly) {
+        (descriptors[index].readOnly &&
+         descriptors[index].id != tonetrace::ParameterId::Status)) {
       return;
     }
     dirtyValues_[index]->store(true, std::memory_order_release);
@@ -1095,7 +1099,7 @@ class ToneTraceClap {
           }
           break;
         }
-        if (!reference_.readyForSave(sampleRate_)) {
+        if (!reference_.readyToAdvance(sampleRate_)) {
           captureBlocked_ = true;
           setWorkflowStep(1);
           startSweep(420.0, 180.0, 220.0);
@@ -1134,7 +1138,9 @@ class ToneTraceClap {
                               ? 2
                               : workflowStepForCurrentPhase());
           startSweep(420.0, 180.0, 220.0);
-          setStatus(Status::InvalidCapture);
+          setStatus(currentPhase == tonetrace::WorkflowPhase::CapturingTarget
+                        ? Status::CannotCorrectYet
+                        : Status::InvalidCapture);
           break;
         }
         stopTones();
@@ -1371,16 +1377,16 @@ class ToneTraceClap {
     if (newConfidence != oldConfidence) {
       playConfidenceSweep(oldConfidence, newConfidence);
     }
-    const bool nowReady = phase == tonetrace::WorkflowPhase::CapturingReference
-                              ? destination->readyForSave(sampleRate_)
-                              : destination->confidenceLevel >= 1;
+    const bool nowReady =
+        tonetrace::captureConfidenceAllowsAdvance(destination->confidenceLevel,
+                                                  destination->overflowed);
     if (nowReady) captureBlocked_ = false;
     setStatus(setupLockedNotice_
                   ? Status::SetupLocked
                   : (captureBlocked_
                          ? (phase == tonetrace::WorkflowPhase::CapturingReference
                                 ? Status::CannotSaveYet
-                                : Status::InvalidCapture)
+                                : Status::CannotCorrectYet)
                                      : captureStatus(phase, newConfidence,
                                                      *destination)));
     if (destination->overflowed) setStatus(Status::CaptureFull);
@@ -1755,7 +1761,7 @@ class ToneTraceClap {
         importedReference_.has_value() ||
         phase == tonetrace::WorkflowPhase::CapturingTarget ||
         (phase == tonetrace::WorkflowPhase::CapturingReference &&
-         reference_.readyForSave(sampleRate_));
+         reference_.readyToAdvance(sampleRate_));
     if (!hasReference) {
       setStatus(Status::InvalidCapture);
       requestWarningSweep();
@@ -2268,7 +2274,7 @@ class ToneTraceClap {
     if (which != 1 ||
         phase_.load(std::memory_order_acquire) !=
             tonetrace::WorkflowPhase::CapturingTarget ||
-        !reference_.readyForSave(sampleRate_)) {
+        !reference_.readyToAdvance(sampleRate_)) {
       return nullptr;
     }
     if (stagedReferenceForExport_.has_value()) {
@@ -2591,7 +2597,10 @@ class ToneTraceClap {
     info->id = static_cast<clap_id>(descriptor.id);
     if (descriptor.stepped) info->flags |= CLAP_PARAM_IS_STEPPED;
     if (descriptor.readOnly) {
-      info->flags |= CLAP_PARAM_IS_READONLY | CLAP_PARAM_IS_HIDDEN;
+      info->flags |= CLAP_PARAM_IS_READONLY;
+      if (descriptor.id != tonetrace::ParameterId::Status) {
+        info->flags |= CLAP_PARAM_IS_HIDDEN;
+      }
     }
     if (descriptor.automatable) info->flags |= CLAP_PARAM_IS_AUTOMATABLE;
     if (descriptor.id == tonetrace::ParameterId::Bypass) {

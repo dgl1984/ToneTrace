@@ -378,7 +378,7 @@ CorrectionModel readModel(std::istream& stream) {
 const std::vector<ParameterDescriptor>& parameterDescriptors() {
   static const std::vector<ParameterDescriptor> descriptors{
       {ParameterId::WorkflowAction, "Workflow Step", 0.0, 7.0, 0.0, "", true, false, true},
-      {ParameterId::Status, "Status", 0.0, 29.0, 0.0, "", false, true, true},
+      {ParameterId::Status, "Status", 0.0, 30.0, 0.0, "", false, true, true},
       {ParameterId::LastCommand, "Last Command", 0.0, 7.0, 0.0, "", false, true, true},
       {ParameterId::MatchMode, "Match Mode", 0.0, 4.0, 1.0, "", true, false, true},
       {ParameterId::MaximumCorrectionDb, "Maximum Correction", 1.0, 60.0, 18.0, "dB", true, false, false},
