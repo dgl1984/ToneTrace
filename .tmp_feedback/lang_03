@@ -1,0 +1,141 @@
+Db()) << ' '
+-          << (boost ? "louder" : "quieter") << " than Reference in "
+-          << runSpan(runs[0]) << " and " << plainDb(runs[1].peakDb()) << ' '
+-          << (boost ? "louder" : "quieter") << " in " << runSpan(runs[1])
++      out << "Compared with Reference, Target has a shelf transition of "
++          << plainDb(difference) << " around " << boundary
++          << "; the band below it is " << (firstHigher ? "higher" : "lower")
+           << '.';
+     }
+     return out.str();
+   }
+ 
+-  if (runs.size() == 3 &&
+-      runs[0].classification == runs[2].classification &&
+-      runs[0].classification != runs[1].classification) {
+-    const bool smile = runs[0].classification == SignedClass::Boost;
+-    std::ostringstream out;
+-    if (kind == DescriptionKind::Capture) {
+-      out << "A " << (smile ? "smile" : "frown") << " curve: "
+-          << plainDb(runs[0].peakDb()) << " in " << runSpan(runs[0]) << " and "
+-          << plainDb(runs[2].peakDb()) << " in " << runSpan(runs[2])
+-          << ", with a " << plainDb(runs[1].peakDb()) << ' '
+-          << (smile ? "dip" : "peak") << " in " << runSpan(runs[1]) << '.';
+-    } else if (kind == DescriptionKind::Correction) {
+-      out << "A " << (smile ? "smile" : "frown") << " correction: "
+-          << plainDb(runs[0].peakDb()) << " in " << runSpan(runs[0]) << " and "
+-          << plainDb(runs[2].peakDb()) << " in " << runSpan(runs[2])
+-          << ", with a " << plainDb(runs[1].peakDb()) << ' '
+-          << (smile ? "dip" : "peak") << " in " << runSpan(runs[1]) << '.';
+-    } else {
+-      out << "Target has a " << (smile ? "smile" : "frown")
+-          << " shape relative to Reference: " << plainDb(runs[0].peakDb())
+-          << " in " << runSpan(runs[0]) << " and "
+-          << plainDb(runs[2].peakDb()) << " in " << runSpan(runs[2])
+-          << ", with a " << plainDb(runs[1].peakDb()) << ' '
+-          << (smile ? "dip" : "peak") << " in " << runSpan(runs[1]) << '.';
+-    }
+-    return out.str();
+-  }
+-
+-  std::ostringstream out;
++  // For multiple separated features, report exactly what the frequency bands
++  // do in low-to-high order. Do not substitute smile/frown or subjective
++  // frequency-zone vocabulary.
++  const std::string features = joinFeatures(runs, kind);
+   if (kind == DescriptionKind::Capture) {
+-    out << "The curve has ";
+-  } else if (kind == DescriptionKind::Correction) {
+-    out << "The correction has ";
+-  } else {
+-    out << "Compared with Reference, Target has ";
++    return "The curve has " + features + ".";
+   }
+-  for (std::size_t index = 0; index < runs.size(); ++index) {
+-    if (index > 0) out << (index + 1 == runs.size() ? ", and " : ", ");
+-    out << genericRunFragment(runs[index], levels, kind);
++  if (kind == DescriptionKind::Correction) {
++    return "The correction applies " + features + ".";
+   }
+-  out << '.';
+-  return out.str();
++  return "Compared with Reference, Target is " + features + ".";
+ }
+ 
+ [[nodiscard]] bool manualGainsActive(const IrRenderSettings& settings) {
+diff --git a/tests/test_engine.cpp b/tests/test_engine.cpp
+index 6b8476e..4e528d6 100644
+--- a/tests/test_engine.cpp
++++ b/tests/test_engine.cpp
+@@ -708,46 +708,52 @@ void testCurveDescription() {
+ 
+   const auto highCut = regionalCapture({0, 0, 0, 0, 0, -6, -6});
+   const std::string highCutText = tonetrace::describeCapture(highCut);
+-  require(containsText(highCutText, "quieter above 6 kHz") &&
++  require(containsText(highCutText, "high shelf shape") &&
++              containsText(highCutText, "above 6 kHz") &&
+               !containsText(highCutText, "Most prominent") &&
+-              !containsText(highCutText, "bass") &&
+-              !containsText(highCutText, "60-250"),
++              !containsText(highCutText, "presence") &&
++              !containsText(highCutText, "air") &&
++              !containsText(highCutText, "brilliance"),
+           "High-frequency cut invented a complementary bass peak or old wording: " +
+               highCutText);
+ 
+   const auto lowShelf = regionalCapture({6, 6, 6, 6, 0, 0, 0});
+   const std::string lowShelfText = tonetrace::describeCapture(lowShelf);
+-  require(containsText(lowShelfText, "louder below 2 kHz") &&
++  require(containsText(lowShelfText, "low shelf shape") &&
++              containsText(lowShelfText, "below 2 kHz") &&
+               !containsText(lowShelfText, "Most prominent"),
+           "Broad four-region low shelf was not described as one shelf: " +
+               lowShelfText);
+ 
+   const auto highShelf = regionalCapture({0, 0, 0, 6, 6, 6, 6});
+   const std::string highShelfText = tonetrace::describeCapture(highShelf);
+-  require(containsText(highShelfText, "louder above 500 Hz"),
++  require(containsText(highShelfText, "high shelf shape") &&
++              containsText(highShelfText, "above 500 Hz"),
+           "Broad high shelf was not described as one high feature: " +
+               highShelfText);
+ 
+   const auto midBump = regionalCapture({0, 0, 6, 6, 6, 0, 0});
+   const std::string midBumpText = tonetrace::describeCapture(midBump);
+   require(containsText(midBumpText, "peak") &&
+-              containsText(midBumpText, "low mid") &&
+-              !containsText(midBumpText, "below 250 Hz"),
++              containsText(midBumpText, "250 Hz to 6 kHz") &&
++              !containsText(midBumpText, "low mid") &&
++              !containsText(midBumpText, "presence"),
+           "Broad mid bump was misclassified: " + midBumpText);
+ 
+-  const auto presenceBell = regionalCapture({0, 0, 0, 0, 6, 0, 0});
+-  const std::string bellText = tonetrace::describeCapture(presenceBell);
++  const auto upperBell = regionalCapture({0, 0, 0, 0, 6, 0, 0});
++  const std::string bellText = tonetrace::describeCapture(upperBell);
+   require(containsText(bellText, "6 dB peak") &&
+-              containsText(bellText, "presence (2 to 6 kHz)") &&
++              containsText(bellText, "2 to 6 kHz") &&
++              !containsText(bellText, "presence") &&
+               !containsText(bellText, "tilts"),
+-          "Presence bell description is not a local peak: " + bellText);
++          "Upper-band bell description is not a local peak: " + bellText);
+ 
+-  const auto notch = regionalCapture({0, 0, 0, -6, 0, 0, 0});
++  const auto notch = regionalCapture({0, 0, -6, 0, 0, 0, 0});
+   const std::string notchText = tonetrace::describeCapture(notch);
+-  require(containsText(notchText, "6 dB dip") &&
+-              containsText(notchText, "mid (500 Hz to 2 kHz)") &&
++  require(containsText(notchText, "6 dB notch") &&
++              containsText(notchText, "250 to 500 Hz") &&
+               !containsText(notchText, "smile"),
+-          "Mid notch description is not a local dip: " + notchText);
++          "Narrow cut was not described as a notch: " + notchText);
+ 
+   std::array<double, 7> tiltLevels{};
+   const auto& bands = tonetrace::curveBands();
+@@ -766,21 +772,28 @@ void testCurveDescription() {
+ 
+   const std::string stepText = tonetrace::describeCapture(
+    
