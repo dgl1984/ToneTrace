@@ -1,0 +1,144 @@
+ Meaningful state changes are announced through normal Windows accessibility events; continuously changing time/drift telemetry is visually refreshed at a restrained rate instead of generating constant speech.
+ 
+-The host's generic parameter view exposes the writable workflow, matching, safety, and global controls. It does **not** expose live Status, Last Command, Capture Confidence, Curve Drift, or Capture Time as automation parameters. Correction Resolution remains deliberately available both there and in the native Bands pages. The native editor also provides the trace-band editor, Curve Description, Options, and Import/Export commands.
++The host's generic parameter view exposes the writable workflow, matching, safety, and global controls. It also exposes one concise read-only **Status** value so a rejected Workflow Step is understandable from an OSARA/control-surface route. Status is **not automatable** and only changes on meaningful state transitions. Last Command, Capture Confidence, Curve Drift, and Capture Time remain native-panel telemetry rather than host automation. Correction Resolution remains deliberately available both there and in the native Bands pages. The native editor also provides the trace-band editor, Curve Description, Options, and Import/Export commands.
+ 
+ ### Reading the Match graph
+ 
+diff --git a/src/tonetrace_describe.cpp b/src/tonetrace_describe.cpp
+index a8efb10..3c57b4b 100644
+--- a/src/tonetrace_describe.cpp
++++ b/src/tonetrace_describe.cpp
+@@ -142,20 +142,17 @@ struct SignedRun {
+ 
+ [[nodiscard]] std::string regionLabel(const RegionLevel& region) {
+   if (region.band == nullptr) return {};
+-  if (region.partial) {
+-    return std::string(region.band->name) + " from " + formatHz(region.lowHz) +
+-           " to " + formatHz(region.highHz);
+-  }
+-  return std::string(region.band->name) + " (" +
+-         formatRange(region.band->lowHz, region.band->highHz) + ")";
++  return formatRange(region.lowHz, region.highHz) + " band";
+ }
+ 
+ [[nodiscard]] std::string runSpan(const SignedRun& run) {
+   if (run.regions.empty()) return {};
+-  if (run.regions.size() == 1) return regionLabel(run.regions.front());
+-  return "from " + std::string(run.regions.front().band->name) + " through " +
+-         std::string(run.regions.back().band->name) + " (" +
+-         formatRange(run.lowHz(), run.highHz()) + ")";
++  return formatRange(run.lowHz(), run.highHz());
++}
++
++[[nodiscard]] bool narrowNotch(const SignedRun& run) {
++  return run.regions.size() == 1 && run.lowHz() > 0.0 &&
++         run.highHz() / run.lowHz() <= 2.5;
+ }
+ 
+ struct CaptureBandMean {
+@@ -328,23 +325,23 @@ struct CaptureBandMean {
+     const double residual = level.levelDb - predicted;
+     squaredResiduals += residual * residual;
+   }
+-  const double rms = std::sqrt(squaredResiduals / static_cast<double>(active.size()));
++  const double rms =
++      std::sqrt(squaredResiduals / static_cast<double>(active.size()));
+   if (rms > kTiltResidualDb) return false;
+ 
+   const char* direction = signedSpan > 0.0 ? "up" : "down";
++  const std::string spanText =
++      formatRange(active.front().lowHz, active.back().highHz);
+   std::ostringstream sentence;
+   if (kind == DescriptionKind::Capture) {
+     sentence << "The curve tilts " << direction << " by " << plainDb(span)
+-             << " from " << regionLabel(active.front()) << " to "
+-             << regionLabel(active.back()) << '.';
++             << " across " << spanText << '.';
+   } else if (kind == DescriptionKind::Correction) {
+     sentence << "The correction tilts " << direction << " by " << plainDb(span)
+-             << " from " << regionLabel(active.front()) << " to "
+-             << regionLabel(active.back()) << '.';
++             << " across " << spanText << '.';
+   } else {
+     sentence << "Target tilts " << direction << " by " << plainDb(span)
+-             << " relative to Reference from " << regionLabel(active.front())
+-             << " to " << regionLabel(active.back()) << '.';
++             << " relative to Reference across " << spanText << '.';
+   }
+   output = sentence.str();
+   return true;
+@@ -434,6 +431,49 @@ struct CaptureBandMean {
+   return {lowest, highest};
+ }
+ 
++[[nodiscard]] std::string featureFragment(const SignedRun& run,
++                                          DescriptionKind kind) {
++  const bool boost = run.meanDb() > 0.0;
++  const double magnitude = std::abs(run.peakDb());
++  const std::string range = runSpan(run);
++  const std::string amount = plainDb(magnitude);
++
++  std::ostringstream out;
++  if (kind == DescriptionKind::Capture) {
++    if (boost) {
++      out << "a " << amount << " peak from " << range;
++    } else if (narrowNotch(run)) {
++      out << "a " << amount << " notch from " << range;
++    } else {
++      out << "a " << amount << " dip from " << range;
++    }
++  } else if (kind == DescriptionKind::Correction) {
++    if (boost) {
++      out << "a " << amount << " boost from " << range;
++    } else if (narrowNotch(run)) {
++      out << "a " << amount << " notch from " << range;
++    } else {
++      out << "a " << amount << " cut from " << range;
++    }
++  } else {
++    out << amount << ' ' << (boost ? "higher" : "lower")
++        << " from " << range;
++  }
++  return out.str();
++}
++
++[[nodiscard]] std::string joinFeatures(const std::vector<SignedRun>& runs,
++                                       DescriptionKind kind) {
++  std::ostringstream out;
++  for (std::size_t index = 0; index < runs.size(); ++index) {
++    if (index > 0) {
++      out << (index + 1 == runs.size() ? ", and " : ", ");
++    }
++    out << featureFragment(runs[index], kind);
++  }
++  return out.str();
++}
++
+ [[nodiscard]] std::string oneRunSentence(const SignedRun& run,
+                                          const std::vector<RegionLevel>& levels,
+                                          DescriptionKind kind) {
+@@ -441,80 +481,61 @@ struct CaptureBandMean {
+   const bool touchesLow = run.firstBandIndex() == lowestActive;
+   const bool touchesHigh = run.lastBandIndex() == highestActive;
+   const double mean = run.meanDb();
+-  const double peak = run.peakDb();
+   const bool boost = mean > 0.0;
+-  const std::string meanText = plainDb(mean);
+-  const std::string peakText = plainDb(peak);
++  const std::string amount = plainDb(mean);
+ 
+   std::ostringstream out;
+   if (touchesLow && !touchesHigh) {
+     const std::string boundary = formatHz(run.highHz());
+     if (kind == DescriptionKind::Capture) {
+-      out << "The curve is " << meanText << ' '
+-          << (boost ? "louder" : "quieter") << " below " << boundary
+-          << " than above it.";
++      out << "A low shelf shape: the band below " << boundary << " is "
++          << amount << ' ' << (boost ? "higher" : "lower")
++          << " than the band above it.";
+     } else if (kind == DescriptionKind::Correction) {
+-      out << "The correction " << (boost ? "boosts" : "cuts") << " below "
+-          << boundary << " by " << meanText << '.';
++      out << "A low shelf " 
