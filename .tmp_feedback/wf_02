@@ -1,0 +1,27 @@
+== kCaptureTime;
+                            }),
+-              "cancelled workflow batch still emitted hidden telemetry");
++              "cancelled workflow batch still emitted high-frequency telemetry");
+     }
+     processCommand(instance.plugin, 1);
+     processParameter(instance.plugin, kToneLevel, -30.0);
+@@ -986,7 +996,7 @@ void run(const char* modulePath,
+     // has arrived a later 2 must be accepted without requiring the user to
+     // first send another explicit 1. This is the real OSARA retry case.
+     {
+-      constexpr std::size_t retryFrames = 48000;
++      constexpr std::size_t retryFrames = 48000 * 4U;
+       std::array<std::vector<float>, 2> retryReference{
+           std::vector<float>(retryFrames), std::vector<float>(retryFrames)};
+       for (std::size_t frame = 0; frame < retryFrames; ++frame) {
+@@ -996,8 +1006,8 @@ void run(const char* modulePath,
+         retryReference[1][frame] = sample;
+       }
+       processSignal(instance.plugin, retryReference);
+-      require(instance.parameter(kCaptureTime) >= 0.35,
+-              "retry fixture did not make Reference saveable");
++      require(instance.parameter(kConfidence) >= (1.0 / 3.0),
++              "retry fixture did not make Reference reach Low confidence");
+       processCommand(instance.plugin, 2);
+       require(instance.parameter(kWorkflow) == 2.0 &&
+                   instance.parameter(kStatus) == 2.0,
