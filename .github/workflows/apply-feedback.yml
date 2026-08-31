@@ -1,0 +1,46 @@
+name: Apply tested user feedback
+on:
+  push:
+    branches: [tmp/apply-feedback]
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Reconstruct verified patches
+        shell: bash
+        run: |
+          cat .tmp_feedback/wf_* > /tmp/workflow.patch
+          cat .tmp_feedback/lang_* > /tmp/language.patch
+          echo '1f565b94750ff867aa002a5ad02aa482d3337b11c82950c0b10386e894725677  /tmp/workflow.patch' | sha256sum -c -
+          echo 'ba8067ba1108519b53294fbd91088c72ed7d24dd1c4c0157a0d79d24c2954e2f  /tmp/language.patch' | sha256sum -c -
+      - name: Apply on clean candidate head
+        shell: bash
+        run: |
+          git config user.name 'Tone Trace CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git fetch origin fix/universal-workflow-status-description
+          git checkout -B feedback-base origin/fix/universal-workflow-status-description
+          test "$(git rev-parse HEAD)" = 'a5ec6ad28b8f97e90d86715c47bad60bebd093fb'
+          git apply --check /tmp/workflow.patch
+          git apply /tmp/workflow.patch
+          git add include/tonetrace/tonetrace_realtime.h plugins/clap/tonetrace_clap.cpp src/tonetrace_realtime.cpp tests/test_clap.cpp
+          git commit -m 'Unify live capture readiness and workflow status'
+          git apply --check /tmp/language.patch
+          git apply /tmp/language.patch
+          git add GUI_DESIGN.md MANUAL.md src/tonetrace_describe.cpp tests/test_engine.cpp
+          git commit -m 'Use plain EQ language in curve descriptions'
+      - name: Verify combined Linux tree
+        shell: bash
+        run: |
+          cmake -S . -B build-feedback -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-feedback --parallel 2
+          ctest --test-dir build-feedback --output-on-failure
+      - name: Publish exact two commits to draft branch
+        shell: bash
+        run: |
+          git push origin HEAD:refs/heads/fix/universal-workflow-status-description --force-with-lease=refs/heads/fix/universal-workflow-status-description:a5ec6ad28b8f97e90d86715c47bad60bebd093fb
