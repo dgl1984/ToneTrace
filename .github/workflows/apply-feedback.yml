@@ -14,6 +14,8 @@ jobs:
       - name: Reconstruct verified patches
         shell: bash
         run: |
+          sha256sum .tmp_feedback/lang_*
+          wc -c .tmp_feedback/lang_*
           cat .tmp_feedback/wf_* > /tmp/workflow.patch
           cat .tmp_feedback/lang_* > /tmp/language.patch
           echo '1f565b94750ff867aa002a5ad02aa482d3337b11c82950c0b10386e894725677  /tmp/workflow.patch' | sha256sum -c -
