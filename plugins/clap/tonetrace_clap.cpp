@@ -2507,6 +2507,10 @@ class ToneTraceClap {
     std::memset(info, 0, sizeof(*info));
     info->id = static_cast<clap_id>(descriptor.id);
     if (descriptor.stepped) info->flags |= CLAP_PARAM_IS_STEPPED;
+    if (descriptor.id == tonetrace::ParameterId::WorkflowAction ||
+        descriptor.id == tonetrace::ParameterId::MatchMode) {
+      info->flags |= CLAP_PARAM_IS_ENUM;
+    }
     if (descriptor.readOnly) info->flags |= CLAP_PARAM_IS_READONLY;
     if (descriptor.automatable) info->flags |= CLAP_PARAM_IS_AUTOMATABLE;
     if (descriptor.id == tonetrace::ParameterId::Bypass) {
@@ -2542,14 +2546,23 @@ class ToneTraceClap {
     const std::size_t index = parameterIndex(id);
     if (output == nullptr || capacity == 0 || index >= descriptors.size()) return false;
     const auto parameter = descriptors[index].id;
+    // A stepped parameter's public text must describe the same integer value
+    // that applyParameter() will accept. In particular, do not use rounding
+    // here while the CLAP stepped-value contract uses integer-cast/truncation.
+    // Hosts such as REAPER/OSARA walk a generic control until value_to_text()
+    // changes, so a rounded label at 1.5 can otherwise claim Workflow Step 2
+    // while the plug-in correctly stores Step 1.
+    const double effectiveValue = descriptors[index].stepped
+                                      ? clampedValue(descriptors[index], value)
+                                      : value;
     if (parameter == tonetrace::ParameterId::WorkflowAction) {
-      std::snprintf(output, capacity, "%s", workflowText(static_cast<int>(std::lround(value))));
+      std::snprintf(output, capacity, "%s", workflowText(static_cast<int>(effectiveValue)));
     } else if (parameter == tonetrace::ParameterId::MatchMode) {
-      std::snprintf(output, capacity, "%s", modeText(static_cast<int>(std::lround(value))));
+      std::snprintf(output, capacity, "%s", modeText(static_cast<int>(effectiveValue)));
     } else if (parameter == tonetrace::ParameterId::LastCommand) {
-      std::snprintf(output, capacity, "%s", workflowText(static_cast<int>(std::lround(value))));
+      std::snprintf(output, capacity, "%s", workflowText(static_cast<int>(effectiveValue)));
     } else if (parameter == tonetrace::ParameterId::Status) {
-      std::snprintf(output, capacity, "%s", statusText(static_cast<int>(std::lround(value))));
+      std::snprintf(output, capacity, "%s", statusText(static_cast<int>(effectiveValue)));
     } else if (parameter == tonetrace::ParameterId::Confidence) {
       const int level = static_cast<int>(std::lround(value * 3.0));
       const auto* instance = self(plugin);
@@ -2565,12 +2578,12 @@ class ToneTraceClap {
     } else if (parameter == tonetrace::ParameterId::CompleteMatch ||
                parameter == tonetrace::ParameterId::ToneNotifications ||
                parameter == tonetrace::ParameterId::Bypass) {
-      std::snprintf(output, capacity, "%s", value >= 0.5 ? "On" : "Off");
+      std::snprintf(output, capacity, "%s", effectiveValue >= 0.5 ? "On" : "Off");
     } else if (parameter == tonetrace::ParameterId::Resolution) {
-      std::snprintf(output, capacity, "%.0f %s", value,
-                    std::lround(value) == 1 ? "band" : "bands");
+      std::snprintf(output, capacity, "%.0f %s", effectiveValue,
+                    static_cast<int>(effectiveValue) == 1 ? "band" : "bands");
     } else if (descriptors[index].stepped) {
-      std::snprintf(output, capacity, "%.0f %s", value, descriptors[index].unit);
+      std::snprintf(output, capacity, "%.0f %s", effectiveValue, descriptors[index].unit);
     } else {
       std::snprintf(output, capacity, "%.3f %s", value, descriptors[index].unit);
     }

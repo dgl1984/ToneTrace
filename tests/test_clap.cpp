@@ -764,6 +764,29 @@ void run(const char* modulePath,
         190, 180, 270, 250, 200, 210, 220, 240, 260};
     require(orderedIds == expectedOrder,
             "generic parameter order no longer matches the frozen accessible design");
+    const auto parameterFlags = [&](clap_id id) -> clap_param_info_flags {
+      for (uint32_t index = 0; index < instance.params->count(instance.plugin);
+           ++index) {
+        clap_param_info_t info{};
+        require(instance.params->get_info(instance.plugin, index, &info),
+                "parameter descriptor query failed while checking flags");
+        if (info.id == id) return info.flags;
+      }
+      require(false, "parameter id missing while checking flags");
+      return 0;
+    };
+    const auto workflowFlags = parameterFlags(kWorkflow);
+    const auto matchModeFlags = parameterFlags(kMatchMode);
+    const auto resolutionFlags = parameterFlags(kResolution);
+    require((workflowFlags & CLAP_PARAM_IS_STEPPED) != 0 &&
+                (workflowFlags & CLAP_PARAM_IS_ENUM) != 0,
+            "Workflow Step is not exposed as a stepped CLAP enum");
+    require((matchModeFlags & CLAP_PARAM_IS_STEPPED) != 0 &&
+                (matchModeFlags & CLAP_PARAM_IS_ENUM) != 0,
+            "Match Mode is not exposed as a stepped CLAP enum");
+    require((resolutionFlags & CLAP_PARAM_IS_STEPPED) != 0 &&
+                (resolutionFlags & CLAP_PARAM_IS_ENUM) == 0,
+            "Correction Resolution was incorrectly exposed as a named enum");
     char accessibleText[128]{};
     double parsedValue = -1.0;
     require(instance.params->value_to_text(instance.plugin, kWorkflow, 2.0,
@@ -776,6 +799,45 @@ void run(const char* modulePath,
                                                &parsedValue) &&
                 parsedValue == 1.0,
             "workflow labels are not round-trippable through the generic host interface");
+    const auto formattedValue = [&](clap_id id, double value) {
+      char text[128]{};
+      require(instance.params->value_to_text(instance.plugin, id, value, text,
+                                             sizeof(text)),
+              "generic parameter value_to_text failed");
+      return std::string(text);
+    };
+    require(formattedValue(kWorkflow, 1.1) == "Capture Reference" &&
+                formattedValue(kWorkflow, 1.5) == "Capture Reference" &&
+                formattedValue(kWorkflow, 1.999) == "Capture Reference" &&
+                formattedValue(kWorkflow, 1.999999999) ==
+                    "Save Reference and Learn Target" &&
+                formattedValue(kWorkflow, 2.0) ==
+                    "Save Reference and Learn Target",
+            "Workflow Step text does not follow CLAP stepped-value semantics");
+    require(formattedValue(kMatchMode, 1.5) == "Voice" &&
+                formattedValue(kMatchMode, 2.0) == "Drums",
+            "Match Mode text does not follow CLAP stepped-value semantics");
+    require(formattedValue(kResolution, 1.5) == "1 band" &&
+                formattedValue(kResolution, 1.999) == "1 band" &&
+                formattedValue(kResolution, 2.0) == "2 bands",
+            "Correction Resolution text disagrees with the accepted stepped value");
+    require(formattedValue(kToneNotifications, 0.5) == "Off" &&
+                formattedValue(kToneNotifications, 0.999999999) == "On",
+            "toggle text disagrees with the accepted stepped value");
+
+    const std::string workflowAtOne = formattedValue(kWorkflow, 1.0);
+    double osaraWorkflowValue = 1.0;
+    constexpr double osaraWorkflowStep = 7.0 / 1000.0;
+    for (int iteration = 0;
+         iteration < 1000 &&
+         formattedValue(kWorkflow, osaraWorkflowValue) == workflowAtOne;
+         ++iteration) {
+      osaraWorkflowValue += osaraWorkflowStep;
+    }
+    require(osaraWorkflowValue >= 2.0 && osaraWorkflowValue < 2.01 &&
+                formattedValue(kWorkflow, osaraWorkflowValue) ==
+                    "Save Reference and Learn Target",
+            "OSARA-style Workflow Step walk reached the next label before integer step 2");
     require(instance.params->value_to_text(instance.plugin, kToneLevel, -60.0,
                                            accessibleText,
                                            sizeof(accessibleText)) &&
@@ -978,10 +1040,9 @@ void run(const char* modulePath,
                 ", drift=" + std::to_string(instance.parameter(kCurveDrift)));
     // Exercise the same host parameter-flush path used by REAPER's generic
     // parameter surface / OSARA: advance from Capture Reference to Learn
-    // Target without relying on an audio-process parameter event. This is the
-    // exact transition that regressed when host synchronization was coupled to
-    // unrelated correction rebuilds.
-    flushParameter(instance.plugin, kWorkflow, 2.0);
+    // Target using the value reached by OSARA's generic 1/1000-range walk,
+    // rather than injecting a perfect integer that hides formatting/step bugs.
+    flushParameter(instance.plugin, kWorkflow, osaraWorkflowValue);
     require(instance.parameter(kWorkflow) == 2.0 &&
                 instance.parameter(kLastCommand) == 2.0 &&
                 instance.parameter(kStatus) == 2.0,
