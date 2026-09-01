@@ -87,24 +87,47 @@ Routine headroom and transparent peak control remain the user's responsibility.
 
 ## Binding accessible workflow
 
-The generic host parameter interface is authoritative. The command sequence is
-Capture Reference; Save Reference and Learn Target; Correct Target; Freeze
-Correction. Save Reference and Learn Target ends Reference capture before Target
-capture begins. If the user requests a Reference-only `.tts` export at that point,
-the Win32 editor lazily analyzes the now-immutable retained Reference on the main
-thread; the ordinary matching path is left untouched. A rejected Save returns to Capture Reference, a rejected Correct
-returns to Learn Target, and a rejected Freeze returns to Correct Target so no
-command can trap the user in an unusable state. Reset requires Arm followed by
-Confirm and can be cancelled.
+The generic host parameter interface is authoritative. One persistent **Workflow
+Step** parameter contains the entire sequence: Capture Reference; Save Reference
+and Learn Target; Correct Target; Freeze Correction; Arm Reset; Confirm Reset;
+Cancel Reset. The control stays at the selected step. CLAP marks it as a stepped
+enum, and the wrapper also interprets a small directional fractional host move
+(such as REAPER/OSARA sending 1.007 while moving upward from step 1) as the next
+enum step instead of truncating it back to 1.
+
+Save Reference and Learn Target ends Reference capture before Target capture
+begins. A minimally valid Reference can be saved after the released short
+saveability gate (about 0.35 seconds of accepted audio plus analysis updates);
+it does **not** need to fill the capture buffer or reach Low confidence. A normal
+Target still needs Low confidence before Correct Target, with Capture Full as the
+deliberate zero-confidence escape hatch. A rejected Save returns to Capture
+Reference, a rejected Correct returns to Learn Target, and a rejected Freeze
+returns to Correct Target so no command can trap the user in an unusable state.
+
+Recapture follows the workflow hierarchy. Starting a new Reference clears the
+current Reference/Target capture chain. Returning to Learn Target after Preview
+or Freeze preserves the valid Reference and starts a fresh Target capture. The
+last-known-good correction remains available as a safety fallback until a new
+candidate validates successfully. Reset remains the explicit whole-instance
+wipe and still requires protected confirmation.
 
 Saved project state never contains live learning. A valid last-known-good
 profile is stored as Frozen; otherwise it is Ready, and loading never resumes
-capture. A generic CLAP state-save callback cannot distinguish an explicit user
+capture. Raw live capture remains wrapper-owned across a same-sample-rate
+deactivate/reactivate so a host that suspends the plug-in on transport Stop
+cannot silently erase a Reference or Target. A real sample-rate change resets
+raw capture because those samples cannot be reinterpreted safely. A generic CLAP state-save callback cannot distinguish an explicit user
 save from host undo/autosave bookkeeping, so taking a snapshot must not mutate
 or cancel the live instance. The explicit Freeze command ends live learning.
 Capture and analysis may take all needed time, while Frozen reports zero
 latency and performs no capture analysis. Invalid or contaminated work must
 never replace the last-known-good profile.
+
+Standard modes retain up to about 30 seconds of accepted audio per capture;
+Custom Max Capture extends that logical ceiling to about 60 seconds. Buffer
+growth is prepared off the realtime audio path, and switching back to a standard
+mode restores the 30-second logical Capture Full point even if larger storage is
+already available.
 
 Capture always analyzes the full supported 10 Hz-30 kHz range. Range Low and
 Range High restrict only the rendered correction delta. Most post-capture

@@ -370,13 +370,18 @@ CorrectionModel readModel(std::istream& stream) {
 
 }  // namespace
 
-// Every parameter must be automatable so that OSARA's FX parameter list exposes
-// it to a screen-reader user; OSARA filters out any non-automatable parameter.
-// Read-only feedback parameters are therefore automatable but not writable.
+// Writable controls remain automatable so REAPER/OSARA exposes them. The
+// released Workflow Step is one persistent stepped/enum parameter; the CLAP
+// wrapper interprets small directional host moves without changing that public
+// contract. Read-only telemetry is available to both the host and native Status
+// panel.
 const std::vector<ParameterDescriptor>& parameterDescriptors() {
+  // Keep the released single Workflow Step contract. All writable controls and
+  // read-only workflow telemetry remain automatable so REAPER/OSARA exposes the
+  // complete universal host surface.
   static const std::vector<ParameterDescriptor> descriptors{
       {ParameterId::WorkflowAction, "Workflow Step", 0.0, 7.0, 0.0, "", true, false, true},
-      {ParameterId::Status, "Status", 0.0, 29.0, 0.0, "", true, true, true},
+      {ParameterId::Status, "Status", 0.0, 30.0, 0.0, "", true, true, true},
       {ParameterId::LastCommand, "Last Command", 0.0, 7.0, 0.0, "", true, true, true},
       {ParameterId::MatchMode, "Match Mode", 0.0, 4.0, 1.0, "", true, false, true},
       {ParameterId::MaximumCorrectionDb, "Maximum Correction", 1.0, 60.0, 18.0, "dB", true, false, false},

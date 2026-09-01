@@ -118,7 +118,8 @@ void testParameterContract() {
       "Tone Notifications", "Bypass"};
   std::set<std::uint32_t> identifiers;
   std::set<std::string> names;
-  for (const auto& parameter : parameters) {
+  for (std::size_t index = 0; index < parameters.size(); ++index) {
+    const auto& parameter = parameters[index];
     require(parameter.name != nullptr && std::string(parameter.name).size() >= 3,
             "A parameter lacks an accessible name");
     require(std::isfinite(parameter.minimum) && std::isfinite(parameter.maximum) &&
@@ -130,13 +131,10 @@ void testParameterContract() {
     require(identifiers.insert(static_cast<std::uint32_t>(parameter.id)).second,
             "A stable parameter identifier is duplicated");
     require(names.insert(parameter.name).second, "A parameter name is duplicated");
+    require(parameter.name == expectedOrder[index],
+            "The universal parameter order changed");
     require(parameter.automatable,
-            "Every parameter must be automatable so OSARA exposes it "
-            "to a screen-reader user");
-  }
-  for (std::size_t index = 0; index < expectedOrder.size(); ++index) {
-    require(parameters[index].name == expectedOrder[index],
-            "The frozen accessible parameter order changed");
+            "Every host parameter must remain visible to REAPER/OSARA");
   }
   const auto mode = std::find_if(
       parameters.begin(), parameters.end(), [](const auto& parameter) {
@@ -144,7 +142,43 @@ void testParameterContract() {
       });
   require(mode != parameters.end() && mode->defaultValue == 1.0,
           "A fresh instance no longer starts in Voice Match Mode");
-  std::cout << "stable generic parameter inventory: passed\n";
+
+  const auto requireReleasedRange = [&](tonetrace::ParameterId id,
+                                        double minimum, double maximum,
+                                        double defaultValue,
+                                        const char* unit) {
+    const auto found = std::find_if(
+        parameters.begin(), parameters.end(), [id](const auto& parameter) {
+          return parameter.id == id;
+        });
+    require(found != parameters.end(),
+            "A released parameter disappeared from the universal surface");
+    require(found->minimum == minimum && found->maximum == maximum &&
+                found->defaultValue == defaultValue &&
+                std::string(found->unit) == unit,
+            "A released Tone Trace parameter range/default/unit drifted");
+  };
+  // These are part of the public 1.0.3 control contract. Keep them pinned here
+  // so an unrelated audit or UI change cannot silently retune existing sessions.
+  requireReleasedRange(tonetrace::ParameterId::RangeHighHz,
+                       20.0, 30000.0, 30000.0, "Hz");
+  requireReleasedRange(tonetrace::ParameterId::CorrectionSharpness,
+                       0.5, 1.5, 1.0, "");
+  requireReleasedRange(tonetrace::ParameterId::CorrectionGainDb,
+                       -24.0, 12.0, 0.0, "dB");
+  requireReleasedRange(tonetrace::ParameterId::EmergencyClipGuardDb,
+                       -12.0, 20.0, 6.0, "dB");
+  requireReleasedRange(tonetrace::ParameterId::ToneLevelDb,
+                       -60.0, -12.0, -12.0, "dB");
+
+  using P = tonetrace::WorkflowPhase;
+  require(!tonetrace::targetCaptureCanCorrect(P::CapturingTarget, 0, false, false) &&
+              tonetrace::targetCaptureCanCorrect(P::CapturingTarget, 1, false, false) &&
+              tonetrace::targetCaptureCanCorrect(P::CapturingTarget, 0, true, false) &&
+              tonetrace::targetCaptureCanCorrect(P::Ready, 0, false, true) &&
+              !tonetrace::targetCaptureCanCorrect(P::CapturingReference, 1, false, false),
+          "Target readiness lost the Low/full/import fallback contract");
+  std::cout << "single Workflow Step and target fallback contract: passed\n";
 }
 
 void testCaptureDiagnosticsAndValidation() {

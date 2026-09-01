@@ -8,7 +8,7 @@ The unusual part is what happens next. Tone Trace does not treat the generated m
 
 This manual starts with the practical workflow. The more technical details are kept for the sections where they help explain a control or behavior rather than being required knowledge up front.
 
-Current version: **1.0.3**.
+Current version: **1.0.4**.
 
 ## The one distinction to get right
 
@@ -55,7 +55,7 @@ The native Tone Trace editor is currently a **Windows Win32 editor**. The plug-i
 
 ### Plug-in format
 
-Tone Trace EQ 1.0.3 ships as **CLAP**. The CLAP implementation is the tested reference release and contains the complete Tone Trace workflow and matching engine.
+Tone Trace EQ 1.0.4 ships as **CLAP**. The CLAP implementation is the tested reference release and contains the complete Tone Trace workflow and matching engine.
 
 ## 2. What Tone Trace is doing
 
@@ -105,7 +105,7 @@ Choosing an appropriate **Match Mode before capture** gives Tone Trace the best 
 - **Full Mix** — the general starting point for complete songs, mixed program material, and pitched instruments that do not fit one of the specialized modes. Guitar, piano, brass, strings, and complete mixes will often make more sense here than in Voice or Drums.
 - **Drums** — start here for drum kits, percussion, loops, and other material where attacks and repeated percussive energy dominate the comparison.
 - **Bass or Synth** — start here for bass guitar, synth bass, strongly synthesized material, and bass-heavy sources whose useful spectral relationship may be quite different from speech or a complete mix.
-- **Custom Max Capture** — useful for unusual restoration work or material you expect to refine heavily by hand. It is not an automatic “best quality” mode; it simply gives detailed or unusual material a different set of matching assumptions.
+- **Custom Max Capture** — useful for unusually varied material, difficult restoration work, or comparisons that benefit from a longer observation window. It can retain up to about 60 seconds of accepted audio per Reference or Target instead of the standard 30 seconds. It is not an automatic higher-quality mode; representative material matters more than filling the buffer.
 
 Starting with the most appropriate mode is preferable, but choosing one does not lock you in. After **Correct Target** or **Freeze Correction**, you can switch Match Modes and compare different interpretations of the retained Reference and Target without recording them again.
 
@@ -136,21 +136,25 @@ During capture, Tone Trace may report:
 
 **Capture Time counts accepted audio, not simply wall-clock playback time.** If the input is silent or below the capture gate, the timer may barely move even though the transport is running.
 
-The current live capture buffer holds up to about **30 seconds of accepted audio**. `Capture full; continue workflow` is not an error; it means Tone Trace has stopped adding samples to that capture and you should continue to the next step.
+Standard modes hold up to about **30 seconds of accepted audio** per Reference or Target. **Custom Max Capture** extends that ceiling to about **60 seconds**. These are maximum accepted-audio capacities, not recommended capture lengths. You do **not** need to fill the buffer before continuing. `Capture full; continue workflow` is not an error; it means Tone Trace has stopped adding samples to that capture and you should continue to the next step.
+
+Reference readiness and Capture Confidence are related but not identical. Once Tone Trace reports that the **Reference capture is ready**, you can continue to Learn Target even if Confidence has not yet reached Low. Confidence remains useful for judging how representative and stable the material is; it is not a requirement to fill the entire Reference buffer.
+
+You can stop playback after capturing the Reference while you prepare or load the Target. Stopping the transport does not discard the captured Reference.
 
 ### Learn Target
 
-Choose **Learn Target** in the Windows editor. This does two things in order: it saves the current Reference, then begins a fresh Target capture. In the host generic parameter view, the same command is named **Save Reference and Learn Target**.
+Choose **Learn Target** in the Windows editor. This does two things in order: it saves the current Reference, then begins a fresh Target capture. In the host generic parameter view, the same Workflow Step is named **Save Reference and Learn Target**. If you return to Learn Target after Preview or Freeze, Tone Trace keeps the valid Reference and starts a fresh Target capture rather than forcing you to capture the Reference again.
 
 Because the Reference is committed first, you can use **Export → Reference Curve (`.tts`)** immediately afterward if your only goal is to create a reusable Reference rather than complete a match.
 
-If the Reference does not yet contain enough accepted material, the command is rejected, the workflow returns to Reference capture, and the status becomes `Cannot save yet; keep capturing`.
+If the Reference does not yet contain enough accepted material to be usable, the command is rejected, the workflow returns to Reference capture, and the status becomes `Cannot save yet; keep capturing`.
 
 Now play the sound you actually want to correct.
 
 The Target uses the same status ladder as the Reference. Under normal conditions, Tone Trace requires at least a low-confidence Target before it will calculate a correction. More representative material is usually better, but you do not need to wait for High if the capture is already stable and representative.
 
-There is one deliberate fallback: if the approximately 30-second **accepted-audio** buffer becomes full while confidence is still zero, the status says `Capture full; continue workflow` and **Correct Target is allowed**. Confidence remains at zero rather than pretending the capture became more reliable. Use Preview to judge that result carefully; if it sounds wrong, Reset and capture more representative material.
+There is one deliberate fallback: if the mode's **accepted-audio** buffer becomes full while confidence is still zero—about 30 seconds in the standard modes or 60 seconds in Custom Max Capture—the status says `Capture full; continue workflow` and **Correct Target is allowed**. Confidence remains at zero rather than pretending the capture became more reliable. Use Preview to judge that result carefully; if it sounds wrong, recapture the Target or start a new Reference.
 
 ### Correct Target
 
@@ -168,6 +172,10 @@ Freeze stops capture and learning. It does **not** make the EQ controls untoucha
 
 Frozen playback reports zero samples of plug-in latency.
 
+### Repeating part of a match
+
+You normally do not need Reset just to redo part of a match. Choosing **Capture Reference** starts a new Reference/Target capture chain. Returning to **Learn Target** after Preview or Freeze keeps the valid Reference and starts a fresh Target capture. While that replacement capture or correction is being prepared, Tone Trace keeps the previous known-good correction available until a new correction has been successfully built.
+
 ### Reset
 
 Reset is intentionally two-step and is exposed through the host's **Workflow Step** parameter:
@@ -175,7 +183,7 @@ Reset is intentionally two-step and is exposed through the host's **Workflow Ste
 1. **Arm Reset**
 2. **Confirm Reset**
 
-Use **Cancel Reset** to return to the previous state without deleting the profile. Tone Trace does not put three extra Reset buttons into the native editor; in REAPER, these commands remain available through the generic FX parameter view.
+Use **Cancel Reset** to return to the previous state without deleting the profile. The native Windows editor keeps Reset out of the main workflow row: **Options... → Reset Tone Trace...** opens a standard confirmation dialog. The host generic parameter view still keeps Arm Reset, Confirm Reset, and Cancel Reset inside the single persistent Workflow Step control.
 
 ## 5. Confidence, stability, and capture status
 
@@ -205,7 +213,7 @@ Confidence is not a promise that the capture represents everything the source ca
 | `Analyzing` | Tone Trace is calculating or rebuilding a profile. |
 | `Preview correction` | A correction is active but not frozen. |
 | `Frozen correction` | Learning is stopped; the saved correction is active. |
-| `Capture full; continue workflow` | The approximately 30-second accepted-audio buffer is full. Continue to the next workflow step. |
+| `Capture full; continue workflow` | The accepted-audio buffer is full: about 30 seconds in standard modes or 60 seconds in Custom Max Capture. Continue to the next workflow step. |
 | `Invalid or contaminated capture` | A requested operation could not use the current audio or imported data. |
 | `Correction update still completing` | A previous correction kernel is still crossfading. This should be brief; wait for the transition to finish before making another correction-changing edit. |
 | `Frozen; setup changed; relearn recommended` | The current profile is preserved, but a setup change means a new capture may be more appropriate. |
@@ -221,7 +229,7 @@ Section 3 gives practical examples for choosing material and a starting mode. Th
 | **Voice** | Speech and vocals. |
 | **Drums** | Percussive material. |
 | **Bass or Synth** | Bass-heavy and synthesized sources. |
-| **Custom Max Capture** | Detailed restoration or material you expect to refine manually. |
+| **Custom Max Capture** | Unusually varied material, difficult restoration, or work that benefits from up to about 60 seconds of accepted audio. |
 
 The modes change how repeated spectral energy, smoothing, stability, and local detail are evaluated. They are not quality levels, and one mode is not simply a higher-resolution version of another.
 
@@ -326,7 +334,7 @@ Turns confidence and warning tones on or off. The intended default is **On**.
 
 ### Confidence Tone Volume
 
-Range: **-60 to -12 dB**. Controls notification and trace-tone level.
+Range: **-60 to -12 dB**. Controls notification and trace-tone level. **-60 dB** is exposed as **Off** in the accessible host text.
 
 ### Bypass
 
@@ -340,9 +348,13 @@ Tone Trace's Windows editor uses real Win32 controls for keyboard and screen-rea
 
 The read-only text box containing the natural-language curve summary has the
 native accessible label **Curve Description**. Its displayed text is the value,
-not the control name.
+not the control name. Reference and Target descriptions use **higher** and
+**lower** because they describe measured spectral relationships. **Boost** and
+**cut** are reserved for the Correction Tone Trace actually applies. When
+Maximum Correction limits a larger learned move, the description reports both
+the learned and applied values.
 
-The host's generic parameter view exposes the global workflow, matching controls, safety controls, and live status. Correction Resolution is deliberately available there and in the native Bands pages. The native editor additionally provides the trace-band editor, curve descriptions, and Import/Export commands.
+The host's generic parameter view exposes the global workflow, matching controls, safety controls, and live status. Correction Resolution is deliberately available there and in the native Bands pages. The native editor additionally provides the trace-band editor, curve descriptions, Import/Export commands, a compact **Options...** dialog for less-frequently changed controls, and a labeled multiline **Status** panel. The Status panel updates immediately for meaningful workflow changes while fast Capture Time and Curve Drift telemetry is throttled so a focused read-only field does not become continuous screen-reader chatter.
 
 ### Reading the Match graph
 
@@ -356,7 +368,7 @@ Reference and Target are displayed relative to their own broad level so the grap
 
 The graph's vertical range adapts to the captured material instead of forcing every trace into a fixed +/-12 dB window. A small `+/- N dB` label shows the current visual range. This affects only the drawing; it does not change the learned match. Exact frequency and dB values remain available in the readout and Curve Description box, so the graph is never required for operation.
 
-Moving the pointer across the graph places a dotted cursor line, and a small label beside it names the frequency under the pointer. The same frequency — together with the Reference, Target, and Correction values at that point — always appears in the readout below the graph, so the hover label is a convenience for sighted pointer use and never the only source of the value.
+Moving the pointer across the graph places a dotted cursor line, and a small label beside it names the frequency under the pointer. The same frequency — together with the Reference, Target, and Correction values at that point — always appears in the readout below the graph, so the hover label is a convenience for sighted pointer use and never the only source of the value. On a new instance, the readout identifies itself as **Curve Readout** and briefly explains that moving over the graph or using Trace Curve will expose exact values.
 
 ### Trace-band keyboard controls
 
@@ -476,11 +488,15 @@ If meters elsewhere in the DAW move but Tone Trace still reports no valid audio,
 
 ### Capture Time moves very slowly or stops
 
-Capture Time is **accepted** time. Quiet gaps can be rejected. If the status eventually becomes `Capture full`, the current capture has reached its approximately 30-second accepted-audio limit; continue the workflow rather than waiting for the timer to move again.
+Capture Time is **accepted** time. Quiet gaps can be rejected. The 30-second standard limit and 60-second Custom Max Capture limit are maximum capacities, not targets you need to reach. If the status eventually becomes `Capture full`, the current capture has reached its mode-specific accepted-audio limit. Continue the workflow rather than waiting for the timer to move again.
 
 ### I hear a descending sweep and the workflow moves backward
 
-That is the warning tone for a rejected command. Read **Status**. Common cases are trying to save the Reference too early or trying to calculate a correction before the Target is usable. A Target that has actually reached `Capture full; continue workflow` is allowed to proceed even if confidence remains zero.
+That is the warning tone for a rejected command. Read **Status**. Common cases are trying to save the Reference before it is usable or trying to calculate a correction before the Target is usable. A Target that has actually reached `Capture full; continue workflow` is allowed to proceed even if confidence remains zero.
+
+### I need to stop between Reference and Target
+
+That is fine. Once the Reference is usable, you can stop playback, prepare or load the Target, resume playback, and continue with **Learn Target**. Stopping the transport does not clear the captured Reference.
 
 ### The match sounds like the opposite of what I wanted
 
@@ -577,7 +593,7 @@ The builder creates a clean Release build, runs the registered tests, stages onl
 
 ### Other platforms
 
-The source contains macOS universal and Linux CMake verification presets, but Tone Trace 1.0.3 does not ship a supported macOS/Linux binary asset or release builder. The custom accessible editor is Windows-only; non-Windows source builds use the CLAP host's parameter interface.
+The source contains macOS universal and Linux CMake verification presets, but Tone Trace 1.0.4 does not ship a supported macOS/Linux binary asset or release builder. The custom accessible editor is Windows-only; non-Windows source builds use the CLAP host's parameter interface.
 
 ### Development documents
 
@@ -593,7 +609,7 @@ This manual is intentionally about using Tone Trace. Source architecture, DSP de
 | Parameter | Range | Default | Access |
 | --- | --- | --- | --- |
 | Workflow Step | 0–7 | 0 | writable |
-| Status | 0–29 | 0 | read-only |
+| Status | 0–30 | 0 | read-only |
 | Last Command | 0–7 | 0 | read-only |
 | Match Mode | 0–4 | Voice | writable |
 | Maximum Correction | 1–60 dB | 18 dB | writable |
@@ -608,7 +624,7 @@ This manual is intentionally about using Tone Trace. Source architecture, DSP de
 | Confidence Tone Volume | -60 to -12 dB | -12 dB | writable |
 | Capture Confidence | 0–1 | 0 | read-only |
 | Curve Drift | 0–60 | 60 | read-only |
-| Capture Time | 0–3600 s host range | 0 | read-only; current capture buffer is about 30 s |
+| Capture Time | 0–3600 s host range | 0 | read-only; 30 s standard / 60 s Custom Max Capture |
 | Tone Notifications | Off/On | On | writable |
 | Bypass | Off/On | Off | writable |
 
@@ -627,4 +643,4 @@ This manual is intentionally about using Tone Trace. Source architecture, DSP de
 
 ---
 
-Tone Trace EQ 1.0.3 is the current Windows CLAP release. The matching engine, state handling, CLAP workflow, full-capture fallback, balanced band-page layout, Voice ringing safeguard, and release UI behavior are covered by automated tests. As with any audio plug-in release, the exact packaged Windows binary should still receive a final host and accessibility check before publication.
+Tone Trace EQ 1.0.4 is the current Windows CLAP release. The matching engine, state handling, CLAP workflow, full-capture fallback, balanced band-page layout, Voice ringing safeguard, and release UI behavior are covered by automated tests. As with any audio plug-in release, the exact packaged Windows binary should still receive a final host and accessibility check before publication.

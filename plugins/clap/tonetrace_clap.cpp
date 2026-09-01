@@ -37,7 +37,8 @@
 namespace {
 
 constexpr const char* kPluginId = "com.lanesaudio.tonetrace-eq";
-constexpr double kMaximumCaptureSeconds = 30.0;
+constexpr double kStandardCaptureSeconds = 30.0;
+constexpr double kCustomMaximumCaptureSeconds = 60.0;
 constexpr std::size_t kMaximumStateBytes = 64U * 1024U * 1024U;
 
 enum class Status : int {
@@ -71,6 +72,7 @@ enum class Status : int {
   CannotSaveYet = 27,
   ImportedReference = 28,
   ImportedTarget = 29,
+  PreparingCapture = 30,
 };
 
 enum WorkFlags : std::uint32_t {
@@ -80,6 +82,8 @@ enum WorkFlags : std::uint32_t {
   WorkReset = 1U << 2U,
   WorkImport = 1U << 3U,
   WorkCleanup = 1U << 4U,
+  WorkCaptureCapacity = 1U << 5U,
+  WorkClearCaptureSources = 1U << 6U,
 };
 
 const char* const kFeatures[]{
@@ -114,6 +118,30 @@ std::size_t parameterIndex(clap_id id) noexcept {
   return descriptors.size();
 }
 
+
+int workflowStepFromHostValue(double requested, int previous) noexcept {
+  if (!std::isfinite(requested)) return previous;
+  requested = std::clamp(requested, 0.0, 7.0);
+  const double nearest = std::round(requested);
+  const double tolerance = 1.0e-7 * std::max(1.0, std::abs(nearest));
+  if (std::abs(requested - nearest) <= tolerance) {
+    return static_cast<int>(nearest);
+  }
+
+  // REAPER/OSARA can move an enum by sending a small fractional change rather
+  // than the next integer (for example 1.007 when the user presses Up at 1).
+  // Preserve the released persistent Workflow Step while treating movement
+  // within the adjacent interval as directional intent.
+  if (requested > static_cast<double>(previous) &&
+      requested < static_cast<double>(previous + 1)) {
+    return std::min(7, previous + 1);
+  }
+  if (requested < static_cast<double>(previous) &&
+      requested > static_cast<double>(previous - 1)) {
+    return std::max(0, previous - 1);
+  }
+  return std::clamp(static_cast<int>(std::lround(requested)), 0, 7);
+}
 double clampedValue(const tonetrace::ParameterDescriptor& descriptor,
                     double value) noexcept {
   if (!std::isfinite(value)) return descriptor.defaultValue;
@@ -182,6 +210,8 @@ const char* statusText(int status) noexcept {
       return "Reference imported; record the Target or import one";
     case Status::ImportedTarget:
       return "Target imported; analyzing correction";
+    case Status::PreparingCapture:
+      return "Preparing 60-second Custom Max Capture buffer";
     case Status::Ready:
     default: return "Ready";
   }
@@ -220,6 +250,12 @@ tonetrace::MatchMode matchMode(double value) noexcept {
   }
 }
 
+double maximumCaptureSeconds(tonetrace::MatchMode mode) noexcept {
+  return mode == tonetrace::MatchMode::CustomMaxCapture
+             ? kCustomMaximumCaptureSeconds
+             : kStandardCaptureSeconds;
+}
+
 struct CaptureBuffer {
   std::array<std::vector<float>, 2> channels;
   std::size_t capacityFrames = 0;
@@ -241,11 +277,19 @@ struct CaptureBuffer {
   std::array<double, 7> bandMomentSum{};
   std::array<double, 7> previousBandAggregate{};
 
-  void prepare(int sampleRate) {
+  void prepare(int sampleRate, double maximumSeconds) {
     capacityFrames = static_cast<std::size_t>(
-        std::ceil(sampleRate * kMaximumCaptureSeconds));
+        std::ceil(sampleRate * maximumSeconds));
     for (auto& channel : channels) channel.assign(capacityFrames, 0.0F);
     reset();
+  }
+
+  void ensureCapacity(int sampleRate, double maximumSeconds) {
+    const std::size_t requiredFrames = static_cast<std::size_t>(
+        std::ceil(sampleRate * maximumSeconds));
+    if (requiredFrames <= capacityFrames) return;
+    for (auto& channel : channels) channel.resize(requiredFrames, 0.0F);
+    capacityFrames = requiredFrames;
   }
 
   void reset() noexcept {
@@ -307,6 +351,11 @@ struct CaptureBuffer {
           -6.2831853071795864769 * cutoff / sampleRate);
     }
 
+    const std::size_t maximumFrames = std::min(
+        capacityFrames,
+        static_cast<std::size_t>(std::ceil(
+            sampleRate * maximumCaptureSeconds(mode))));
+
     for (std::size_t frame = 0; frame < count; ++frame) {
       double power = 0.0;
       std::array<double, 7> bandPower{};
@@ -337,7 +386,7 @@ struct CaptureBuffer {
       smoothedPower += (power - smoothedPower) * alpha;
       if (smoothedPower <= gatePower) continue;
 
-      if (frames >= capacityFrames) {
+      if (frames >= maximumFrames) {
         overflowed = true;
         continue;
       }
@@ -752,6 +801,24 @@ class ToneTraceClap {
     return settings;
   }
 
+  [[nodiscard]] double configuredCaptureSeconds() const noexcept {
+    return maximumCaptureSeconds(
+        matchMode(value(tonetrace::ParameterId::MatchMode)));
+  }
+
+  [[nodiscard]] bool captureBuffersReadyForCurrentMode() const noexcept {
+    const int required = static_cast<int>(std::ceil(configuredCaptureSeconds()));
+    return captureCapacitySeconds_.load(std::memory_order_acquire) >= required;
+  }
+
+  void ensureCaptureCapacityForCurrentMode() {
+    const double seconds = configuredCaptureSeconds();
+    reference_.ensureCapacity(sampleRate_, seconds);
+    target_.ensureCapacity(sampleRate_, seconds);
+    captureCapacitySeconds_.store(
+        static_cast<int>(std::ceil(seconds)), std::memory_order_release);
+  }
+
   tonetrace::IrRenderSettings currentRenderSettings() {
     syncManualGainsSize();
     tonetrace::IrRenderSettings settings;
@@ -1010,12 +1077,21 @@ class ToneTraceClap {
     }
     switch (command) {
       case 1:
+        if (!captureBuffersReadyForCurrentMode()) {
+          stopTones();
+          pendingReferenceCaptureStart_.store(true, std::memory_order_release);
+          controlBusy_.store(true, std::memory_order_release);
+          setStatus(Status::PreparingCapture);
+          requestMainThread(WorkCaptureCapacity);
+          break;
+        }
         stopTones();
         captureBlocked_ = false;
-        setupLockedNotice_ = false;
-        importedReference_.reset();
-        importedTarget_.reset();
-        stagedReferenceForExport_.reset();
+        setupLockedNotice_.store(false, std::memory_order_release);
+        hasImportedReference_.store(false, std::memory_order_release);
+        hasImportedTarget_.store(false, std::memory_order_release);
+        stagedReferenceValid_.store(false, std::memory_order_release);
+        requestMainThread(WorkClearCaptureSources);
         reference_.reset();
         target_.reset();
         phase_.store(tonetrace::WorkflowPhase::CapturingReference,
@@ -1025,20 +1101,19 @@ class ToneTraceClap {
         setValue(tonetrace::ParameterId::CurveDriftDb, 60.0, true);
         setValue(tonetrace::ParameterId::CaptureSeconds, 0.0, true);
         break;
-      case 2:
-        if (phase_.load(std::memory_order_acquire) !=
-                tonetrace::WorkflowPhase::CapturingReference ||
-            !reference_.readyForSave(sampleRate_)) {
-          if (phase_.load(std::memory_order_acquire) !=
-              tonetrace::WorkflowPhase::CapturingReference) {
-            reference_.reset();
-            target_.reset();
-            phase_.store(tonetrace::WorkflowPhase::CapturingReference,
-                         std::memory_order_release);
-            setValue(tonetrace::ParameterId::Confidence, 0.0, true);
-            setValue(tonetrace::ParameterId::CurveDriftDb, 60.0, true);
-            setValue(tonetrace::ParameterId::CaptureSeconds, 0.0, true);
-          }
+      case 2: {
+        // Learn Target is also the natural "recapture Target" operation. A
+        // usable Reference survives when the user moves back to this workflow
+        // level from Preview/Frozen; only Target-and-later learned state is
+        // invalidated. This mirrors the hierarchical workflow users expect:
+        // recapturing Reference clears everything downstream, while recapturing
+        // Target preserves Reference.
+        const bool referenceAvailable =
+            hasImportedReference_.load(std::memory_order_acquire) ||
+            reference_.readyForSave(sampleRate_);
+        if (!referenceAvailable) {
+          phase_.store(tonetrace::WorkflowPhase::CapturingReference,
+                       std::memory_order_release);
           captureBlocked_ = true;
           setWorkflowStep(1);
           startSweep(420.0, 180.0, 220.0);
@@ -1047,8 +1122,9 @@ class ToneTraceClap {
         }
         stopTones();
         captureBlocked_ = false;
-        setupLockedNotice_ = false;
-        importedTarget_.reset();
+        setupLockedNotice_.store(false, std::memory_order_release);
+        hasImportedTarget_.store(false, std::memory_order_release);
+        requestMainThread(WorkClearCaptureSources);
         target_.reset();
         phase_.store(tonetrace::WorkflowPhase::CapturingTarget,
                      std::memory_order_release);
@@ -1057,6 +1133,7 @@ class ToneTraceClap {
         setValue(tonetrace::ParameterId::CurveDriftDb, 60.0, true);
         setValue(tonetrace::ParameterId::CaptureSeconds, 0.0, true);
         break;
+      }
       case 3:
         // Low confidence remains the normal quality threshold, but a capture
         // that filled the entire accepted-audio buffer must be allowed to
@@ -1067,7 +1144,7 @@ class ToneTraceClap {
         if (!tonetrace::targetCaptureCanCorrect(
                 phase_.load(std::memory_order_acquire),
                 target_.confidenceLevel, target_.overflowed,
-                importedTarget_.has_value())) {
+                hasImportedTarget_.load(std::memory_order_acquire))) {
           captureBlocked_ = true;
           setWorkflowStep(2);
           startSweep(420.0, 180.0, 220.0);
@@ -1102,11 +1179,8 @@ class ToneTraceClap {
         resetArmed_.store(true, std::memory_order_release);
         break;
       case 6:
-        if (resetArmed_.exchange(false, std::memory_order_acq_rel)) {
-          stopTones();
-          setStatus(Status::Analyzing);
-          controlBusy_.store(true, std::memory_order_release);
-          requestMainThread(WorkReset);
+        if (resetArmed_.load(std::memory_order_acquire)) {
+          (void)requestConfirmedReset();
         }
         break;
       case 7:
@@ -1126,7 +1200,24 @@ class ToneTraceClap {
     return true;
   }
 
+  [[nodiscard]] bool requestConfirmedReset() noexcept {
+    if (controlBusy_.exchange(true, std::memory_order_acq_rel)) {
+      setStatus(Status::Analyzing);
+      return false;
+    }
+    stopTones();
+    resetArmed_.store(false, std::memory_order_release);
+    setValue(tonetrace::ParameterId::LastCommand, 6.0, true);
+    setStatus(Status::Analyzing);
+    requestMainThread(WorkReset);
+    return true;
+  }
+
   void consumePendingWorkflowCommand() noexcept {
+    if (pendingEditorConfirmedReset_.exchange(false,
+                                              std::memory_order_acq_rel)) {
+      (void)requestConfirmedReset();
+    }
     const int command = pendingWorkflowCommand_.exchange(
         0, std::memory_order_acq_rel);
     if (command == 0) return;
@@ -1161,13 +1252,17 @@ class ToneTraceClap {
     }
     const auto parameterId = descriptors[index].id;
     const double previousValue = values_[index]->load(std::memory_order_acquire);
-    const double newValue = clampedValue(descriptors[index], requested);
+    const double newValue = parameterId == tonetrace::ParameterId::WorkflowAction
+                                ? static_cast<double>(workflowStepFromHostValue(
+                                      requested,
+                                      lastWorkflowStep_.load(std::memory_order_acquire)))
+                                : clampedValue(descriptors[index], requested);
     const auto currentPhase = phase_.load(std::memory_order_acquire);
     if (parameterId == tonetrace::ParameterId::MatchMode &&
         (currentPhase == tonetrace::WorkflowPhase::CapturingReference ||
          currentPhase == tonetrace::WorkflowPhase::CapturingTarget)) {
       markDirty(index);
-      setupLockedNotice_ = true;
+      setupLockedNotice_.store(true, std::memory_order_release);
       setStatus(Status::SetupLocked);
       return false;
     }
@@ -1199,6 +1294,10 @@ class ToneTraceClap {
                         ? Status::Frozen
                         : Status::Preview);
         }
+      } else if (newValue != previousValue &&
+                 matchMode(newValue) == tonetrace::MatchMode::CustomMaxCapture &&
+                 !captureBuffersReadyForCurrentMode()) {
+        requestMainThread(WorkCaptureCapacity);
       }
     } else if (parameterId == tonetrace::ParameterId::ToneNotifications ||
                parameterId == tonetrace::ParameterId::ToneLevelDb ||
@@ -1211,9 +1310,6 @@ class ToneTraceClap {
                parameterId == tonetrace::ParameterId::CorrectionGainDb ||
                parameterId == tonetrace::ParameterId::RangeLowHz ||
                parameterId == tonetrace::ParameterId::RangeHighHz) {
-      if (parameterId == tonetrace::ParameterId::Resolution) {
-        syncManualGainsSize();
-      }
       requestMainThread(WorkRebuild);
     }
     return true;
@@ -1304,7 +1400,7 @@ class ToneTraceClap {
                               ? destination->readyForSave(sampleRate_)
                               : destination->confidenceLevel >= 1;
     if (nowReady) captureBlocked_ = false;
-    setStatus(setupLockedNotice_
+    setStatus(setupLockedNotice_.load(std::memory_order_acquire)
                   ? Status::SetupLocked
                   : (captureBlocked_
                          ? (phase == tonetrace::WorkflowPhase::CapturingReference
@@ -1512,11 +1608,13 @@ class ToneTraceClap {
     const auto matchUncapped = currentMatchSettings(true);
     tonetrace::MatchEngine engine;
     const auto referenceCapture =
-        importedReference_ ? *importedReference_
-                           : engine.capture(reference_.audio(sampleRate_),
-                                            matchUncapped);
+        hasImportedReference_.load(std::memory_order_acquire) &&
+                importedReference_.has_value()
+            ? *importedReference_
+            : engine.capture(reference_.audio(sampleRate_), matchUncapped);
     const auto targetCapture =
-        importedTarget_
+        hasImportedTarget_.load(std::memory_order_acquire) &&
+                importedTarget_.has_value()
             ? *importedTarget_
             : engine.capture(target_.audio(sampleRate_), matchUncapped);
     auto model = engine.match(referenceCapture, targetCapture, matchUncapped);
@@ -1663,10 +1761,13 @@ class ToneTraceClap {
   void applyImportedReference(const tonetrace::SpectrumCapture& capture) {
     stopTones();
     captureBlocked_ = false;
-    setupLockedNotice_ = false;
+    setupLockedNotice_.store(false, std::memory_order_release);
     importedReference_ = capture;
+    hasImportedReference_.store(true, std::memory_order_release);
     importedTarget_.reset();
+    hasImportedTarget_.store(false, std::memory_order_release);
     stagedReferenceForExport_.reset();
+    stagedReferenceValid_.store(false, std::memory_order_release);
     reference_.reset();
     target_.reset();
     phase_.store(tonetrace::WorkflowPhase::CapturingTarget,
@@ -1681,7 +1782,8 @@ class ToneTraceClap {
   void applyImportedTarget(const tonetrace::SpectrumCapture& capture) {
     const auto phase = phase_.load(std::memory_order_acquire);
     const bool hasReference =
-        importedReference_.has_value() ||
+        (hasImportedReference_.load(std::memory_order_acquire) &&
+         importedReference_.has_value()) ||
         phase == tonetrace::WorkflowPhase::CapturingTarget ||
         (phase == tonetrace::WorkflowPhase::CapturingReference &&
          reference_.readyForSave(sampleRate_));
@@ -1692,8 +1794,9 @@ class ToneTraceClap {
     }
     stopTones();
     captureBlocked_ = false;
-    setupLockedNotice_ = false;
+    setupLockedNotice_.store(false, std::memory_order_release);
     importedTarget_ = capture;
+    hasImportedTarget_.store(true, std::memory_order_release);
     phase_.store(tonetrace::WorkflowPhase::Preview,
                  std::memory_order_release);
     setStatus(Status::ImportedTarget);
@@ -1747,7 +1850,10 @@ class ToneTraceClap {
                       std::memory_order_release);
     importedReference_ = referenceCapture;
     importedTarget_ = targetCapture;
+    hasImportedReference_.store(true, std::memory_order_release);
+    hasImportedTarget_.store(true, std::memory_order_release);
     stagedReferenceForExport_.reset();
+    stagedReferenceValid_.store(false, std::memory_order_release);
     phase_.store(tonetrace::WorkflowPhase::Frozen,
                  std::memory_order_release);
     setValue(tonetrace::ParameterId::MatchMode,
@@ -1804,6 +1910,20 @@ class ToneTraceClap {
     const std::uint32_t work = pendingWork_.exchange(WorkNone,
                                                      std::memory_order_acq_rel);
     try {
+      if ((work & WorkCaptureCapacity) != 0U) {
+        ensureCaptureCapacityForCurrentMode();
+      }
+      if ((work & WorkClearCaptureSources) != 0U) {
+        if (!hasImportedReference_.load(std::memory_order_acquire)) {
+          importedReference_.reset();
+        }
+        if (!hasImportedTarget_.load(std::memory_order_acquire)) {
+          importedTarget_.reset();
+        }
+        if (!stagedReferenceValid_.load(std::memory_order_acquire)) {
+          stagedReferenceForExport_.reset();
+        }
+      }
       if ((work & WorkReset) != 0U) {
         std::fill(manualGains_.begin(), manualGains_.end(), 0.0);
         setValue(tonetrace::ParameterId::CorrectionGainDb, 0.0, true);
@@ -1816,6 +1936,9 @@ class ToneTraceClap {
         }
         hasProfile_.store(false, std::memory_order_release);
         updateManualOnlyTail();
+        hasImportedReference_.store(false, std::memory_order_release);
+        hasImportedTarget_.store(false, std::memory_order_release);
+        stagedReferenceValid_.store(false, std::memory_order_release);
         importedReference_.reset();
         importedTarget_.reset();
         stagedReferenceForExport_.reset();
@@ -1823,6 +1946,7 @@ class ToneTraceClap {
         target_.reset();
         phase_.store(tonetrace::WorkflowPhase::Ready,
                      std::memory_order_release);
+        setWorkflowStep(0);
         setValue(tonetrace::ParameterId::Confidence, 0.0, true);
         setValue(tonetrace::ParameterId::CurveDriftDb, 60.0, true);
         setValue(tonetrace::ParameterId::CaptureSeconds, 0.0, true);
@@ -1836,15 +1960,23 @@ class ToneTraceClap {
       if ((work & WorkImport) != 0U) {
         applyPendingImport();
       }
+      if ((work & WorkCaptureCapacity) != 0U &&
+          pendingReferenceCaptureStart_.exchange(false,
+                                                 std::memory_order_acq_rel)) {
+        controlBusy_.store(false, std::memory_order_release);
+        (void)executeCommand(1);
+      }
       if (core_ != nullptr) core_->collectRetiredKernels();
     } catch (const std::exception&) {
+      pendingReferenceCaptureStart_.store(false, std::memory_order_release);
       setStatus(Status::AnalysisFailed);
       requestWarningSweep();
     }
-    if ((work & (WorkAnalyze | WorkReset)) != 0U) {
+    if ((work & (WorkAnalyze | WorkReset | WorkCaptureCapacity)) != 0U) {
       controlBusy_.store(false, std::memory_order_release);
     }
-    if ((work & (WorkAnalyze | WorkRebuild | WorkReset | WorkImport)) != 0U) {
+    if ((work & (WorkAnalyze | WorkRebuild | WorkReset | WorkImport |
+                 WorkCaptureCapacity)) != 0U) {
       notifyParameterValuesChanged();
     }
   }
@@ -2036,29 +2168,65 @@ class ToneTraceClap {
       return false;
     }
     try {
-      instance->sampleRate_ = static_cast<int>(std::lround(sampleRate));
+      const int requestedSampleRate = static_cast<int>(std::lround(sampleRate));
+      const auto preservedPhase =
+          instance->phase_.load(std::memory_order_acquire);
+      const bool liveCapturePhase =
+          preservedPhase == tonetrace::WorkflowPhase::CapturingReference ||
+          preservedPhase == tonetrace::WorkflowPhase::CapturingTarget;
+      const bool preserveLiveCapture =
+          liveCapturePhase && instance->sampleRate_ == requestedSampleRate &&
+          instance->reference_.capacityFrames > 0 &&
+          instance->target_.capacityFrames > 0;
+
+      instance->sampleRate_ = requestedSampleRate;
       instance->maxFrames_ = maxFrames;
       instance->stopTones();
       instance->pendingWorkflowCommand_.store(0, std::memory_order_release);
-      instance->setWorkflowStep(0);
-      instance->reference_.prepare(instance->sampleRate_);
-      instance->target_.prepare(instance->sampleRate_);
+      instance->pendingEditorConfirmedReset_.store(false,
+                                                   std::memory_order_release);
+
+      if (!preserveLiveCapture) {
+        // A fresh activation or a real sample-rate change cannot safely reuse
+        // raw capture samples. Ordinary transport stop/start at the same rate
+        // never enters this branch and therefore cannot behave like Reset.
+        instance->setWorkflowStep(0);
+        const double captureSeconds = instance->configuredCaptureSeconds();
+        instance->reference_.prepare(instance->sampleRate_, captureSeconds);
+        instance->target_.prepare(instance->sampleRate_, captureSeconds);
+        instance->captureCapacitySeconds_.store(
+            static_cast<int>(std::ceil(captureSeconds)),
+            std::memory_order_release);
+        instance->hasImportedReference_.store(false, std::memory_order_release);
+        instance->hasImportedTarget_.store(false, std::memory_order_release);
+        instance->stagedReferenceValid_.store(false, std::memory_order_release);
+        instance->importedReference_.reset();
+        instance->importedTarget_.reset();
+        instance->stagedReferenceForExport_.reset();
+      } else {
+        // Buffers may already have been grown for Custom Max Capture. This call
+        // can only grow them on this control thread and never clears retained
+        // samples.
+        instance->ensureCaptureCapacityForCurrentMode();
+      }
+
       for (auto& channel : instance->scratchInput_) channel.assign(maxFrames, 0.0F);
       for (auto& channel : instance->scratchOutput_) channel.assign(maxFrames, 0.0F);
       tonetrace::RealtimeConvolverConfig config;
       config.sampleRate = instance->sampleRate_;
       config.channels = 2;
       instance->core_ = std::make_unique<tonetrace::HeadlessPluginCore>(config);
+
       const auto restored = tonetrace::deserializeProjectState(
           instance->pendingCoreState_.empty()
               ? tonetrace::serializeProjectState(nullptr)
               : instance->pendingCoreState_);
+      bool restoredProfile = false;
       if (restored.phase == tonetrace::WorkflowPhase::Frozen && restored.snapshot) {
         restored.snapshot->renderSettings.sampleRate = instance->sampleRate_;
         const auto validation = instance->core_->commitCandidate(*restored.snapshot);
         if (!validation.accepted) return false;
-        instance->phase_.store(tonetrace::WorkflowPhase::Frozen,
-                               std::memory_order_release);
+        restoredProfile = true;
         instance->hasProfile_.store(true, std::memory_order_release);
         instance->tailFrames_.store(static_cast<uint32_t>(std::clamp(
             restored.snapshot->renderSettings.durationSeconds *
@@ -2066,6 +2234,20 @@ class ToneTraceClap {
             0.0,
             static_cast<double>(std::numeric_limits<uint32_t>::max()))),
             std::memory_order_release);
+      } else {
+        instance->hasProfile_.store(false, std::memory_order_release);
+        instance->tailFrames_.store(0, std::memory_order_release);
+      }
+
+      if (preserveLiveCapture) {
+        // A host lifecycle interruption must not replace a live Reference or
+        // Target capture with the serialized Frozen/Ready project snapshot.
+        // The old correction may still be restored for monitoring, but the
+        // capture phase, raw samples, Workflow Step and telemetry remain intact.
+        instance->phase_.store(preservedPhase, std::memory_order_release);
+      } else if (restoredProfile) {
+        instance->phase_.store(tonetrace::WorkflowPhase::Frozen,
+                               std::memory_order_release);
         instance->setValue(tonetrace::ParameterId::Confidence,
             std::min(restored.snapshot->reference.confidence,
                      restored.snapshot->target.confidence), true);
@@ -2076,12 +2258,11 @@ class ToneTraceClap {
       } else {
         instance->phase_.store(tonetrace::WorkflowPhase::Ready,
                                std::memory_order_release);
-        instance->hasProfile_.store(false, std::memory_order_release);
-        instance->tailFrames_.store(0, std::memory_order_release);
         instance->setValue(tonetrace::ParameterId::Confidence, 0.0, true);
         instance->setValue(tonetrace::ParameterId::CurveDriftDb, 60.0, true);
         instance->setStatus(Status::Ready);
       }
+
       instance->core_->setBypassed(
           instance->value(tonetrace::ParameterId::Bypass) >= 0.5);
       instance->syncManualGainsFromSnapshot();
@@ -2113,6 +2294,8 @@ class ToneTraceClap {
     instance->active_.store(false, std::memory_order_release);
     instance->stopTones();
     instance->pendingWorkflowCommand_.store(0, std::memory_order_release);
+    instance->pendingEditorConfirmedReset_.store(false,
+                                                 std::memory_order_release);
     // A host may deliver a previously requested main-thread callback after
     // deactivation. Drop work tied to the old renderer/captures so that a
     // later activation cannot accidentally run a stale analyze/rebuild/reset.
@@ -2120,12 +2303,11 @@ class ToneTraceClap {
     instance->pendingImportKind_.store(0, std::memory_order_release);
     instance->controlBusy_.store(false, std::memory_order_release);
     instance->core_.reset();
-    // Captures are rebuilt on every activation and are never part of project
-    // state. Release their potentially large 30-second stereo allocations as
-    // soon as the host deactivates the instance instead of retaining roughly
-    // 23 MB at 48 kHz (and proportionally more at high sample rates).
-    instance->reference_.release();
-    instance->target_.release();
+    // Raw capture is intentionally wrapper-owned rather than project-state
+    // data. Keep it across deactivate/reactivate so a host that suspends a CLAP
+    // instance when transport stops cannot silently discard the Reference or
+    // Target. The vectors are released naturally when the plug-in is destroyed;
+    // a real sample-rate change resets them on the next activation.
     for (auto& channel : instance->scratchInput_) {
       std::vector<float>().swap(channel);
     }
@@ -2187,10 +2369,14 @@ class ToneTraceClap {
   }
 
   const tonetrace::SpectrumCapture* stagedSpectrumForEditor(int which) noexcept {
-    if (which == 1 && importedReference_.has_value()) {
+    if (which == 1 &&
+        hasImportedReference_.load(std::memory_order_acquire) &&
+        importedReference_.has_value()) {
       return &*importedReference_;
     }
-    if (which == 2 && importedTarget_.has_value()) {
+    if (which == 2 &&
+        hasImportedTarget_.load(std::memory_order_acquire) &&
+        importedTarget_.has_value()) {
       return &*importedTarget_;
     }
     if (which != 1 ||
@@ -2199,7 +2385,8 @@ class ToneTraceClap {
         !reference_.readyForSave(sampleRate_)) {
       return nullptr;
     }
-    if (stagedReferenceForExport_.has_value()) {
+    if (stagedReferenceValid_.load(std::memory_order_acquire) &&
+        stagedReferenceForExport_.has_value()) {
       return &*stagedReferenceForExport_;
     }
 
@@ -2214,8 +2401,10 @@ class ToneTraceClap {
       tonetrace::MatchEngine engine;
       stagedReferenceForExport_ =
           engine.capture(reference_.audio(sampleRate_), currentMatchSettings(true));
+      stagedReferenceValid_.store(true, std::memory_order_release);
     } catch (...) {
       stagedReferenceForExport_.reset();
+      stagedReferenceValid_.store(false, std::memory_order_release);
     }
     controlBusy_.store(false, std::memory_order_release);
     return stagedReferenceForExport_.has_value()
@@ -2316,6 +2505,19 @@ class ToneTraceClap {
     instance->requestMainThread(WorkImport);
   }
 
+  static void editorRequestReset(void* context) noexcept {
+    auto* instance = static_cast<ToneTraceClap*>(context);
+    if (instance == nullptr) return;
+    instance->resetArmed_.store(false, std::memory_order_release);
+    if (!instance->processing_.load(std::memory_order_acquire)) {
+      (void)instance->requestConfirmedReset();
+      return;
+    }
+    instance->pendingEditorConfirmedReset_.store(true,
+                                                 std::memory_order_release);
+    instance->requestHostParameterFlush();
+  }
+
   static bool CLAP_ABI guiIsApiSupported(const clap_plugin_t*,
                                          const char* api,
                                          bool isFloating) noexcept {
@@ -2350,7 +2552,8 @@ class ToneTraceClap {
           editorSetParameter, editorPlayTraceTone, editorPlayBandSweep,
           editorSetBandGain,
           editorGetBandGain, editorGetBandCount, editorSetImportedSpectrum,
-          editorSetImportedModel, editorGetSampleRate);
+          editorSetImportedModel, editorGetSampleRate, nullptr,
+          editorRequestReset);
       if (!editor->create()) return false;
       instance->editor_ = std::move(editor);
       return true;
@@ -2507,6 +2710,10 @@ class ToneTraceClap {
     std::memset(info, 0, sizeof(*info));
     info->id = static_cast<clap_id>(descriptor.id);
     if (descriptor.stepped) info->flags |= CLAP_PARAM_IS_STEPPED;
+    if (descriptor.id == tonetrace::ParameterId::WorkflowAction ||
+        descriptor.id == tonetrace::ParameterId::MatchMode) {
+      info->flags |= CLAP_PARAM_IS_ENUM;
+    }
     if (descriptor.readOnly) info->flags |= CLAP_PARAM_IS_READONLY;
     if (descriptor.automatable) info->flags |= CLAP_PARAM_IS_AUTOMATABLE;
     if (descriptor.id == tonetrace::ParameterId::Bypass) {
@@ -2701,8 +2908,11 @@ class ToneTraceClap {
   std::atomic<bool> resetArmed_{false};
   std::atomic<bool> controlBusy_{false};
   std::atomic<bool> hasProfile_{false};
+  std::atomic<int> captureCapacitySeconds_{0};
+  std::atomic<bool> pendingReferenceCaptureStart_{false};
   std::atomic<int> lastWorkflowStep_{0};
   std::atomic<int> pendingWorkflowCommand_{0};
+  std::atomic<bool> pendingEditorConfirmedReset_{false};
   std::atomic<bool> stopToneRequested_{false};
   std::atomic<int> pendingToneRequest_{0};
   std::atomic<bool> traceToneRequested_{false};
@@ -2729,7 +2939,7 @@ class ToneTraceClap {
   CaptureBuffer target_;
   SweepTone tone_;
   bool captureBlocked_ = false;
-  bool setupLockedNotice_ = false;
+  std::atomic<bool> setupLockedNotice_{false};
   std::array<std::vector<float>, 2> scratchInput_;
   std::array<std::vector<float>, 2> scratchOutput_;
   std::unique_ptr<tonetrace::HeadlessPluginCore> core_;
@@ -2742,6 +2952,9 @@ class ToneTraceClap {
   tonetrace::SpectrumCapture pendingImportedReference_;
   tonetrace::SpectrumCapture pendingImportedTarget_;
   tonetrace::CorrectionModel pendingImportedModel_;
+  std::atomic<bool> hasImportedReference_{false};
+  std::atomic<bool> hasImportedTarget_{false};
+  std::atomic<bool> stagedReferenceValid_{false};
   std::optional<tonetrace::SpectrumCapture> importedReference_;
   std::optional<tonetrace::SpectrumCapture> importedTarget_;
   // Lazily materialized only for Reference-only .tts export after Learn Target;

@@ -3,7 +3,44 @@
 All notable Tone Trace EQ changes are recorded here. Versions follow semantic
 versioning, and release dates use `YYYY-MM-DD`.
 
-## [Unreleased]
+## [1.0.4] - 2026-09-01
+
+### Added
+
+- **Custom Max Capture** can now retain up to about 60 seconds of accepted
+  audio per Reference or Target. Standard modes retain their 30-second limit.
+- Added a compact **Options...** dialog to the Windows editor for Full
+  Correction Range, tone settings, Bypass, and Reset.
+- Added an improved multiline **Status** display that keeps workflow state,
+  Capture Time, confidence, Curve Drift, and the last action together.
+
+### Improved
+
+- **Curve Description** now uses clearer, frequency-specific language.
+  Reference and Target measurements are described as higher or lower, while
+  boost and cut terminology is reserved for the EQ correction Tone Trace
+  actually applies.
+- Curve descriptions now report when **Maximum Correction** has limited a
+  larger learned correction.
+- Returning to **Learn Target** after Preview or Freeze now allows the Target
+  to be captured again without throwing away the existing Reference.
+- Tone Trace keeps the previous known-good correction available while a new
+  capture or correction is being prepared.
+
+### Fixed
+
+- Fixed edge cases where REAPER users with OSARA could not use the FX
+  parameters dialog to move to the next step in the match process.
+- Stopping playback no longer causes Tone Trace to forget a captured Reference
+  or Target.
+- Fixed cases where Tone Trace could unnecessarily require a full capture
+  before allowing the workflow to continue.
+- Improved keyboard navigation through the new Status display and reduced
+  unnecessary repeated status announcements for screen-reader users.
+- The Curve Readout now explains its purpose when a new instance opens instead
+  of appearing as a blank read-only field.
+- Improved reliability when changing Correction Resolution or moving between
+  capture and correction stages.
 
 ## [1.0.3] - 2026-08-30
 

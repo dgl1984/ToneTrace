@@ -41,6 +41,7 @@ class ToneTraceWin32Editor {
   // captured at other sample rates against this session's Nyquist.
   using GetSampleRateFn = double (*)(void* context);
   using RefreshFn = void (*)(void* context);
+  using RequestResetFn = void (*)(void* context);
   // The wrapper stores the handed-off capture/model and applies it on the main
   // thread via a WorkImport callback, so import stays thread-safe even though
   // the file dialog runs on the UI thread.
@@ -59,7 +60,8 @@ class ToneTraceWin32Editor {
                        SetImportedSpectrumFn setImportedSpectrum = nullptr,
                        SetImportedModelFn setImportedModel = nullptr,
                        GetSampleRateFn getSampleRate = nullptr,
-                       RefreshFn refresh = nullptr);
+                       RefreshFn refresh = nullptr,
+                       RequestResetFn requestReset = nullptr);
   ~ToneTraceWin32Editor();
 
   ToneTraceWin32Editor(const ToneTraceWin32Editor&) = delete;

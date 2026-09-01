@@ -34,6 +34,14 @@ constexpr int kDescribeId = 104;
 constexpr int kTraceId = 105;
 constexpr int kExportId = 106;
 constexpr int kImportId = 107;
+constexpr int kOptionsId = 108;
+constexpr int kStatusLabelId = 206;
+constexpr int kDescriptionEditId = 203;
+constexpr int kOptionFullRangeId = 4001;
+constexpr int kOptionToneNotificationsId = 4002;
+constexpr int kOptionToneLevelId = 4003;
+constexpr int kOptionBypassId = 4004;
+constexpr int kOptionResetId = 4005;
 constexpr int kModeComboId = 200;
 constexpr int kModeLabelId = 201;
 constexpr int kResolutionLabelId = 204;
@@ -377,8 +385,12 @@ void feedSeconds(const clap_plugin_t* plugin, double seconds,
   while (position < total) {
     const uint32_t count = std::min(frames, total - position);
     if (position == 0 && command != 0) {
+      // Drive the released single Workflow Step parameter exactly as a host or
+      // OSARA generic parameter view does.
+      require(command >= 1 && command <= 4,
+              "ui harness requested an unknown workflow step");
       input.events.clear();
-      input.add(100, command);
+      input.add(100, static_cast<double>(command));
     }
     for (uint32_t frame = 0; frame < count; ++frame) {
       const double t = static_cast<double>(position + frame) / 48000.0;
@@ -409,8 +421,11 @@ void commitCorrectionProfile(const clap_plugin_t* plugin) {
   // no-op request_callback implementation cannot leave stale work pending.
   plugin->on_main_thread(plugin);
   require(plugin->start_processing(plugin), "ui harness start failed");
-  feedSeconds(plugin, 2.4, 1, 0.0);   // Capture Reference
-  feedSeconds(plugin, 3.2, 2, 1.7);   // Learn Target through low-confidence threshold
+  // Reference saveability is deliberately lighter than Target confidence: a
+  // minimally valid Reference can advance after roughly 0.35 s accepted audio,
+  // while the Target normally reaches Low confidence before Correct Target.
+  feedSeconds(plugin, 1.0, 1, 0.0);   // Capture a minimally valid Reference
+  feedSeconds(plugin, 6.0, 2, 1.7);   // Learn Target through Low confidence
   feedSeconds(plugin, 0.2, 3, 0.0);   // Correct Target schedules analysis
   plugin->on_main_thread(plugin);
   pumpMessages();
@@ -426,7 +441,7 @@ void commitCorrectionProfile(const clap_plugin_t* plugin) {
   require(status == 4.0 || status == 5.0,
           "ui harness could not reach a committed correction (status=" +
               std::to_string(static_cast<int>(status)) +
-              ", workflow=" +
+              ", workflowStep=" +
               std::to_string(static_cast<int>(valueOf(100))) +
               ", lastCommand=" +
               std::to_string(static_cast<int>(valueOf(195))) +
@@ -445,9 +460,10 @@ void verifyKnownGoodKeyboardBaseline(HWND editor) {
   HWND modeLabel = GetDlgItem(editor, kModeLabelId);
   HWND mode = GetDlgItem(editor, kModeComboId);
   HWND trace = GetDlgItem(editor, kTraceId);
+  HWND options = GetDlgItem(editor, kOptionsId);
 
   require(tabs && capture && learn && correct && freeze && modeLabel && mode &&
-              trace,
+              trace && options,
           "Match-page keyboard controls are incomplete");
   require(textOf(modeLabel) == L"Match Mode" &&
               GetWindow(mode, GW_HWNDPREV) == modeLabel,
@@ -458,8 +474,9 @@ void verifyKnownGoodKeyboardBaseline(HWND editor) {
   requireNextTab(editor, learn, false, kCorrectTargetId, "Learn -> Correct");
   requireNextTab(editor, correct, false, kFreezeId, "Correct -> Freeze");
   requireNextTab(editor, freeze, false, kModeComboId, "Freeze -> Match Mode");
-  requireNextTab(editor, mode, false, kTraceId, "Match Mode -> Trace");
-  requireNextTab(editor, trace, false, kEditFirstId, "Trace -> first value");
+  requireNextTab(editor, mode, false, kEditFirstId,
+                 "Match Mode -> first value");
+  require(textOf(options) == L"Options...", "Options button caption changed");
 
   requireNextTab(editor, capture, true, kTabControlId,
                  "Shift+Tab Capture -> tabs");
@@ -514,6 +531,145 @@ void verifyKnownGoodKeyboardBaseline(HWND editor) {
     require((code & DLGC_WANTALLKEYS) == 0,
             "readonly multiline edit can trap Tab");
   }
+}
+
+
+HWND findStatusEdit(HWND editor) {
+  HWND result = nullptr;
+  EnumChildWindows(
+      editor,
+      [](HWND child, LPARAM context) -> BOOL {
+        wchar_t cls[32]{};
+        GetClassNameW(child, cls, static_cast<int>(std::size(cls)));
+        const LONG_PTR style = GetWindowLongPtrW(child, GWL_STYLE);
+        const LONG_PTR exStyle = GetWindowLongPtrW(child, GWL_EXSTYLE);
+        if (_wcsicmp(cls, L"Edit") == 0 &&
+            (style & ES_READONLY) != 0 &&
+            (style & ES_MULTILINE) != 0 &&
+            (exStyle & WS_EX_CLIENTEDGE) != 0 &&
+            GetDlgCtrlID(child) != kDescriptionEditId) {
+          *reinterpret_cast<HWND*>(context) = child;
+          return FALSE;
+        }
+        return TRUE;
+      },
+      reinterpret_cast<LPARAM>(&result));
+  return result;
+}
+
+void verifyStatusPanel(HWND editor) {
+  selectPage(editor, 0);
+  HWND label = GetDlgItem(editor, kStatusLabelId);
+  HWND status = findStatusEdit(editor);
+  require(label != nullptr && status != nullptr,
+          "labeled multiline Status panel is missing");
+  require(textOf(label) == L"Status", "Status label caption changed");
+  require(IsWindowVisible(status) != FALSE,
+          "Status panel is hidden on the Match page");
+
+  const std::wstring text = textOf(status);
+  require(text.find(L"Status:") != std::wstring::npos &&
+              text.find(L"Capture time:") != std::wstring::npos &&
+              text.find(L"Confidence:") != std::wstring::npos &&
+              text.find(L"Curve drift:") != std::wstring::npos &&
+              text.find(L"Last action:") != std::wstring::npos,
+          "Status panel no longer exposes the complete workflow/telemetry summary");
+
+  IAccessible* accessible = nullptr;
+  const HRESULT hr = AccessibleObjectFromWindow(
+      status, static_cast<DWORD>(OBJID_CLIENT), IID_IAccessible,
+      reinterpret_cast<void**>(&accessible));
+  require(SUCCEEDED(hr) && accessible != nullptr,
+          "Status panel does not expose MSAA/IAccessible");
+  VARIANT self{};
+  self.vt = VT_I4;
+  self.lVal = CHILDID_SELF;
+  BSTR name = nullptr;
+  require(SUCCEEDED(accessible->get_accName(self, &name)) && name != nullptr &&
+              std::wstring(name).find(L"Status") != std::wstring::npos,
+          "Status panel did not inherit its native Status label");
+  SysFreeString(name);
+  accessible->Release();
+
+  HWND lastValue = GetDlgItem(editor, kEditFirstId + 6);
+  require(lastValue != nullptr, "last Match exact-value edit missing");
+  require(GetNextDlgTabItem(editor, lastValue, FALSE) == status,
+          "Match value edits do not advance to Status");
+  HWND readout = GetNextDlgTabItem(editor, status, FALSE);
+  require(readout != nullptr && readout != status,
+          "Status does not advance to the readout");
+  require(textOf(readout).find(L"Curve Readout:") == 0,
+          "fresh Curve Readout is blank or does not explain its purpose");
+  require(GetNextDlgTabItem(editor, readout, FALSE) ==
+              GetDlgItem(editor, kOptionsId),
+          "readout does not advance to Options");
+  require(GetNextDlgTabItem(editor, GetDlgItem(editor, kOptionsId), FALSE) ==
+              GetDlgItem(editor, kTraceId),
+          "Options does not advance to Trace Curve");
+  require(GetNextDlgTabItem(editor, GetDlgItem(editor, kTraceId), FALSE) ==
+              GetDlgItem(editor, kDescriptionEditId),
+          "Trace Curve does not advance to Curve Description");
+}
+
+struct OptionsObservation {
+  bool found = false;
+  bool controlsComplete = false;
+  bool standardDialog = false;
+  std::wstring resetCaption;
+  std::wstring toneLevel;
+};
+
+void verifyOptionsDialog(HWND editor) {
+  OptionsObservation observation;
+  const DWORD guiThread = GetWindowThreadProcessId(editor, nullptr);
+  std::thread inspector([&] {
+    HWND dialog = nullptr;
+    for (int attempt = 0; attempt < 300 && dialog == nullptr; ++attempt) {
+      EnumThreadWindows(
+          guiThread,
+          [](HWND candidate, LPARAM context) -> BOOL {
+            wchar_t title[256]{};
+            GetWindowTextW(candidate, title, static_cast<int>(std::size(title)));
+            if (std::wstring(title) == L"Tone Trace EQ Options") {
+              *reinterpret_cast<HWND*>(context) = candidate;
+              return FALSE;
+            }
+            return TRUE;
+          },
+          reinterpret_cast<LPARAM>(&dialog));
+      if (dialog == nullptr) Sleep(10);
+    }
+    if (dialog == nullptr) return;
+
+    observation.found = true;
+    wchar_t cls[32]{};
+    GetClassNameW(dialog, cls, static_cast<int>(std::size(cls)));
+    observation.standardDialog = _wcsicmp(cls, L"#32770") == 0;
+    HWND fullRange = GetDlgItem(dialog, kOptionFullRangeId);
+    HWND tones = GetDlgItem(dialog, kOptionToneNotificationsId);
+    HWND toneLevel = GetDlgItem(dialog, kOptionToneLevelId);
+    HWND bypass = GetDlgItem(dialog, kOptionBypassId);
+    HWND reset = GetDlgItem(dialog, kOptionResetId);
+    HWND ok = GetDlgItem(dialog, IDOK);
+    HWND cancel = GetDlgItem(dialog, IDCANCEL);
+    observation.controlsComplete = fullRange && tones && toneLevel && bypass &&
+                                   reset && ok && cancel;
+    if (reset != nullptr) observation.resetCaption = textOf(reset);
+    if (toneLevel != nullptr) observation.toneLevel = textOf(toneLevel);
+    PostMessageW(dialog, WM_COMMAND, MAKEWPARAM(IDCANCEL, BN_CLICKED), 0);
+  });
+
+  SendMessageW(editor, WM_COMMAND, MAKEWPARAM(kOptionsId, BN_CLICKED), 0);
+  inspector.join();
+  require(observation.found, "Options button did not open its native dialog");
+  require(observation.standardDialog,
+          "Options is no longer a standard Windows dialog");
+  require(observation.controlsComplete,
+          "Options dialog is missing a universal-access control");
+  require(observation.resetCaption == L"Reset Tone Trace...",
+          "Options reset caption changed");
+  require(observation.toneLevel.find(L"dB") != std::wstring::npos,
+          "Options tone level no longer exposes a dB value");
 }
 
 void verifyBandAccessibility(HWND fader) {
@@ -1135,6 +1291,8 @@ void run(const char* path) {
     require(editor != nullptr, "could not locate editor HWND");
 
     verifyKnownGoodKeyboardBaseline(editor);
+    verifyStatusPanel(editor);
+    verifyOptionsDialog(editor);
     verifyResolutionTabRefresh(instance.plugin, editor);
     verifyFlatExportError(editor);
     verifyManualBandBeforeProfile(editor);

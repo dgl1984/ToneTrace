@@ -47,9 +47,12 @@ Canvas interactions:
 - The pointer becomes a crosshair over the Match plot, and the hover cursor is
   visibly repainted as it moves instead of changing only the text readout.
 - Arrow keys move the same cursor (blind + keyboard).
-- The readonly Curve Description box contains a natural-language summary, e.g.: *"Reference rises from 100 Hz to 4 kHz with a 3 dB presence
-  bump; target is 6 dB darker below 200 Hz; correction cuts 3 dB at 100 Hz,
-  boosts 2 dB at 2 kHz, strongest in the low-mid region."*
+- The readonly Curve Description box contains a natural-language summary using
+  plain EQ terms and explicit frequencies, e.g. *"Correction: boosts about 3 dB
+  from 80 to 180 Hz, cuts about 2 dB from 700 Hz to 2 kHz, then boosts about
+  4 dB from 7 to 12 kHz."* Reference and Target measurements use higher/lower
+  language; boost/cut is reserved for the actual Correction. Subjective zone
+  names such as presence/air and smile/frown shorthand are deliberately avoided.
 
 ## Accessibility surface (native controls)
 
@@ -57,12 +60,13 @@ Canvas interactions:
 | --- | --- | --- |
 | Curve description label | STATIC | Native accessible name for the description edit; never painted-only |
 | Curve description box | READONLY multiline EDIT | Natural-language description of all curves; sole non-visual curve reading |
-| Trace/readout box | READONLY EDIT; wraps visually on band pages | Exact Hz/dB on Match; concise band-page guidance and focused-band detail |
-| Capture Reference / Learn Target / Correct / Freeze | BUTTONs | Workflow steps (mirror the CLAP WorkflowAction param); Learn Target saves the Reference first, then begins Target capture |
+| Trace/readout box | READONLY EDIT; wraps visually on band pages | Starts with a concise Curve Readout purpose message; then provides exact Hz/dB on Match, transient action messages, and focused-band detail |
+| Capture Reference / Learn Target / Correct / Freeze | BUTTONs | Mirror values 1–4 of the single persistent CLAP Workflow Step; Learn Target saves the Reference first, then begins Target capture |
 | Match Mode | labeled COMBOBOX (named options) | Voice default; Full Mix / Voice / Drums / Bass+Synth / Custom |
 | Correction Resolution | labeled COMBOBOX on Bands pages | 1–120 bands; mirrors the host parameter and rebuilds the editable pages |
 | Range low / high, strength, correction ceiling, etc. | exact-value EDITs | Continuous params, committed on kill-focus |
-| Phase / status | READONLY EDIT | "Capturing Reference", "Frozen", etc. |
+| Status label + panel | STATIC + READONLY multiline EDIT | Current status plus Capture Time, Confidence, Curve Drift, and Last Action; fast telemetry is throttled while focused |
+| Options... | BUTTON | Opens a native modal dialog for Full Correction Range, tone controls, Bypass, and protected Reset |
 | Legend rows | per-curve STATIC+color swatch | Names each curve for tabbing |
 
 Rules from the OptiLab study applied here:
@@ -75,6 +79,7 @@ Rules from the OptiLab study applied here:
   captions are never treated as an accessibility surface.
 - The painted canvas creates **no** accessible object; it is not a tab stop.
 - The description box and readout announce via `NotifyWinEvent` on demand only.
+- The multiline Status panel refreshes immediately when Status/Last Action changes. Capture Time and Curve Drift refresh at a limited rate and pause while the Status field has focus so NVDA/Narrator are not flooded by telemetry value changes.
 - Band pages use the full editor width and prefer at most 10 bands per page. A
   non-multiple is rebalanced so there is no nearly empty final tab. The native
   tab control always uses complete **Bands N-M** captions and relies on its
@@ -129,10 +134,12 @@ Rules from the OptiLab study applied here:
   explaining that it saves the captured Reference and then begins Target
   capture, while the host generic Workflow Step keeps the explicit
   **Save Reference and Learn Target** wording. A committed Reference can be
-  exported before a Target match is completed.
+  exported before a Target match is completed. Returning to Learn Target from
+  Preview/Frozen recaptures only the Target and preserves the Reference.
 - Tooltip registration uses the Windows `TTTOOLINFOW_V2_SIZE` contract. This
   keeps all eight action/control tooltips available in hosts with either legacy
   Common Controls or a version 6 manifest.
+- Less-frequently changed controls stay behind the native **Options...** button rather than crowding the Match page. The dialog uses standard Windows controls and leaves the same parameters available through the host generic surface.
 - Static labels and readonly dark-panel text use explicit high-contrast colors;
   exact-value boxes retain a light edit background.
 

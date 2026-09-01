@@ -14,8 +14,8 @@ Tone Trace EQ is a free match EQ from **Lanes Audio** and ships as a CLAP plug-i
 
 ## Download and install
 
-The 1.0.3 binary release is **Windows 10/11 x64**. Download the one
-release asset named `ToneTrace_EQ_1.0.3_Windows_x64.zip`, extract it, and copy
+The 1.0.4 binary release is **Windows 10/11 x64**. Download the one
+release asset named `ToneTrace_EQ_1.0.4_Windows_x64.zip`, extract it, and copy
 `plugins\clap\Tone Trace EQ.clap` to:
 
 `C:\Program Files\Common Files\CLAP\`
@@ -25,7 +25,7 @@ documentation, licenses, and `docs\BUILD_MANIFEST.txt` with a SHA-256 hash for
 every packaged file. It contains no installer, developer tools, tests, or debug
 symbols, and it changes nothing until you copy the `.clap` file.
 
-Source builds are possible on other C++20 platforms, but 1.0.3 does not claim a
+Source builds are possible on other C++20 platforms, but 1.0.4 does not claim a
 supported non-Windows binary release or native non-Windows custom editor.
 
 ## The one rule to remember
@@ -50,7 +50,7 @@ If a dull microphone recording should sound more like a brighter microphone, cap
 7. Listen. If the broad match is right but you want to shape it further, use the correction controls or the graphic-EQ bands.
 8. Choose **Freeze Correction** when you are satisfied.
 
-A match does not become untouchable after Freeze. Tone Trace keeps the captured relationship available, so you can continue refining the correction without starting the capture process over.
+A match does not become untouchable after Freeze. Tone Trace keeps the captured relationship available, so you can continue refining the correction without starting the capture process over. You also do not need to fill the 30-second standard capture buffer before moving on; that figure is a maximum accepted-audio capacity, not a recommended capture length. Once the Reference is usable, you may stop playback to prepare the Target without losing the Reference.
 
 For the complete walkthrough, control descriptions, troubleshooting, and import/export instructions, see **[MANUAL.md](MANUAL.md)**.
 
@@ -69,6 +69,8 @@ For speech and microphone work, Tone Trace also watches for a particular failure
 
 For unusually severe restoration work, the normal **Maximum Correction** limit can be raised or bypassed with **Full Correction Range**. Tone Trace will allow large corrections when they are genuinely called for, but it does not pretend that large boosts are free: leave appropriate headroom and use your preferred dynamics processing afterward when needed.
 
+**Custom Max Capture** extends the accepted-audio ceiling from the standard 30 seconds to about 60 seconds per Reference or Target. It is intended for unusually varied material, difficult restoration, or comparisons that benefit from a longer observation window—not as an automatic quality setting. Representative material still matters more than simply filling the buffer.
+
 ## Live use and impulse responses
 
 Once Tone Trace has learned the correction, Preview and Frozen operation report **zero samples of plug-in latency** and use no lookahead. That makes a learned match practical in monitoring, broadcast, voice, and other real-time paths instead of limiting it to offline analysis.
@@ -84,10 +86,14 @@ exact-value field, NVDA, and Narrator. Values retain up to three meaningful
 decimal places, and Narrator does not substitute percentages.
 
 With NVDA, band navigation is intentionally concise. The read-only curve text
-is explicitly labeled **Curve Description**, and global controls and workflow
-status are also exposed through the host's generic parameter interface,
-including workflows such as REAPER with OSARA. Optional tone notifications can
-provide additional nonvisual feedback and are enabled by default.
+is explicitly labeled **Curve Description**. Reference and Target measurements
+use higher/lower wording, while boost/cut is reserved for the Correction Tone
+Trace actually applies. The Match page has a labeled
+multiline **Status** field plus an **Options...** button for less-frequently
+changed controls. Global controls and the single persistent **Workflow Step**
+remain available through the host's generic parameter interface, including
+REAPER with OSARA. Optional tone notifications provide additional nonvisual
+feedback and are enabled by default.
 
 Accessibility feedback is especially welcome at `info@lanesaudio.com`.
 
@@ -98,8 +104,8 @@ Tone Trace 1.0 ships as **CLAP**.
 The Windows CLAP build includes the native accessible editor. The custom editor
 is Windows-only; non-Windows source builds use the host's CLAP parameter view.
 
-Version 1.0.3 has one release asset:
-`ToneTrace_EQ_1.0.3_Windows_x64.zip`. Per-file SHA-256 hashes are stored inside
+Version 1.0.4 has one release asset:
+`ToneTrace_EQ_1.0.4_Windows_x64.zip`. Per-file SHA-256 hashes are stored inside
 that ZIP in `docs/BUILD_MANIFEST.txt`.
 
 ## Tone Trace is an EQ matcher, not a limiter
@@ -115,7 +121,7 @@ Exported IRs remain linear and do not include the Emergency Clip Guard. If the f
 - **[GUI_DESIGN.md](GUI_DESIGN.md)** — native editor and accessibility design.
 - **[plugins/README.md](plugins/README.md)** — wrapper implementation and host-boundary details.
 - **[CHANGELOG.md](CHANGELOG.md)** — versioned user-visible changes.
-- **[RELEASE_NOTES.md](RELEASE_NOTES.md)** — 1.0.3 summary, asset contents, and installation.
+- **[RELEASE_NOTES.md](RELEASE_NOTES.md)** — 1.0.4 summary, asset contents, and installation.
 - **[RELEASING.md](RELEASING.md)** — deterministic build, verification, tag, and upload procedure.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — build, testing, and accessibility invariants for changes.
 - **[SECURITY.md](SECURITY.md)** — private vulnerability-reporting policy.
@@ -140,7 +146,7 @@ It does not install or replace plug-ins on the machine.
 ### Other platforms
 
 `CMakePresets.json` contains macOS universal and Linux verification presets for
-developers. There is no 1.0.3 macOS/Linux release builder or supported binary
+developers. There is no 1.0.4 macOS/Linux release builder or supported binary
 asset, and the custom native editor remains Windows-only.
 
 ### Developer path

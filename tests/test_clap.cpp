@@ -29,7 +29,6 @@ namespace {
 constexpr clap_id kWorkflow = 100;
 constexpr clap_id kMatchMode = 110;
 constexpr clap_id kCorrectionStrength = 120;
-constexpr clap_id kResolution = 130;
 constexpr clap_id kLastCommand = 195;
 constexpr clap_id kConfidence = 200;
 constexpr clap_id kCurveDrift = 210;
@@ -52,19 +51,11 @@ struct DynamicLibrary {
 
   explicit DynamicLibrary(const char* path) {
 #if defined(_WIN32)
-    SetLastError(ERROR_SUCCESS);
     handle = LoadLibraryA(path);
-    const DWORD loadError = GetLastError();
 #else
     handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
 #endif
-#if defined(_WIN32)
-    require(handle != nullptr,
-            "could not load CLAP module (Windows error " +
-                std::to_string(loadError) + ")");
-#else
     require(handle != nullptr, "could not load CLAP module");
-#endif
   }
 
   ~DynamicLibrary() {
@@ -643,6 +634,217 @@ void runRealFixturePair(const clap_plugin_factory_t* factory,
 }
 
 
+
+void workflowSurvivesTransportAndFractionalOsaraStep(
+    const clap_plugin_factory_t* factory,
+    const clap_plugin_descriptor_t* descriptor) {
+  HostState host;
+  PluginInstance instance(
+      factory->create_plugin(factory, &host.host, descriptor->id));
+  require(instance.plugin->activate(instance.plugin, 48000.0, 1, 16384),
+          "transport-preservation activation failed");
+  require(instance.plugin->start_processing(instance.plugin),
+          "transport-preservation processing start failed");
+
+  // A little over one second is intentionally far below Capture Full. The
+  // released workflow only needs a minimally valid Reference (about 0.35 s
+  // plus analysis updates) before Learn Target is legal.
+  constexpr std::size_t frames = 48000U + 4096U;
+  std::array<std::vector<float>, 2> reference{
+      std::vector<float>(frames), std::vector<float>(frames)};
+  constexpr double pi = 3.14159265358979323846;
+  for (std::size_t frame = 0; frame < frames; ++frame) {
+    const double t = static_cast<double>(frame) / 48000.0;
+    const float sample = static_cast<float>(
+        0.09 * std::sin(2.0 * pi * 173.0 * t) +
+        0.05 * std::sin(2.0 * pi * 911.0 * t) +
+        0.025 * std::sin(2.0 * pi * 4217.0 * t));
+    reference[0][frame] = sample;
+    reference[1][frame] = sample;
+  }
+
+  (void)processSignal(instance.plugin, reference, 1);
+  const double capturedBeforeStop = instance.parameter(kCaptureTime);
+  require(instance.parameter(kWorkflow) == 1.0 && capturedBeforeStop >= 0.35,
+          "short valid Reference did not become saveable before transport stop");
+
+  // REAPER is allowed to suspend a CLAP instance around transport Stop. That
+  // lifecycle transition must not behave like Reset or discard raw Reference
+  // samples.
+  instance.plugin->stop_processing(instance.plugin);
+  instance.plugin->deactivate(instance.plugin);
+  require(instance.plugin->activate(instance.plugin, 48000.0, 1, 16384),
+          "transport-preservation reactivation failed");
+  require(instance.plugin->start_processing(instance.plugin),
+          "transport-preservation processing restart failed");
+  require(instance.parameter(kWorkflow) == 1.0 &&
+              instance.parameter(kCaptureTime) >= capturedBeforeStop - 1.0e-6,
+          "transport stop/reactivation discarded the Reference capture");
+
+  // OSARA/REAPER has been observed to express one Up step from 1 as a small
+  // fractional increase such as 1.007. The one persistent Workflow Step must
+  // interpret that as directional intent to move to 2, not truncate back to 1.
+  flushParameter(instance.plugin, kWorkflow, 1.007);
+  require(instance.parameter(kWorkflow) == 2.0 &&
+              instance.parameter(kLastCommand) == 2.0 &&
+              instance.parameter(kStatus) == 2.0,
+          "fractional OSARA Up did not advance Workflow Step 1 to Learn Target");
+
+  instance.plugin->stop_processing(instance.plugin);
+  instance.plugin->deactivate(instance.plugin);
+}
+
+
+void recaptureInvalidatesOnlyDownstreamStages(
+    const clap_plugin_factory_t* factory,
+    const clap_plugin_descriptor_t* descriptor) {
+  HostState host;
+  PluginInstance instance(
+      factory->create_plugin(factory, &host.host, descriptor->id));
+  require(instance.plugin->activate(instance.plugin, 48000.0, 1, 16384),
+          "recapture hierarchy activation failed");
+  require(instance.plugin->start_processing(instance.plugin),
+          "recapture hierarchy processing start failed");
+
+  constexpr std::size_t frames = 48000U * 10U;
+  std::array<std::vector<float>, 2> reference{
+      std::vector<float>(frames), std::vector<float>(frames)};
+  std::array<std::vector<float>, 2> target = reference;
+  std::mt19937 generator(0x52454341U);
+  std::uniform_real_distribution<float> noise(-0.12F, 0.12F);
+  for (std::size_t channel = 0; channel < 2; ++channel) {
+    for (std::size_t frame = 0; frame < frames; ++frame) {
+      reference[channel][frame] = noise(generator);
+      const float previous = frame == 0 ? 0.0F : reference[channel][frame - 1];
+      const float delayed = frame < 7 ? 0.0F : reference[channel][frame - 7];
+      target[channel][frame] =
+          0.58F * reference[channel][frame] + 0.33F * previous -
+          0.17F * delayed;
+    }
+  }
+
+  processSignal(instance.plugin, reference, 1);
+  require(instance.parameter(kCaptureTime) >= 0.35,
+          "recapture hierarchy Reference never became saveable");
+  flushParameter(instance.plugin, kWorkflow, 2.0);
+  require(instance.parameter(kWorkflow) == 2.0 &&
+              instance.parameter(kStatus) == 2.0,
+          "initial Learn Target did not start");
+  processSignal(instance.plugin, target);
+  require(instance.parameter(kConfidence) > 0.0,
+          "initial Target never became usable in recapture hierarchy test");
+  processCommand(instance.plugin, 3);
+  instance.plugin->on_main_thread(instance.plugin);
+  require(instance.parameter(kStatus) == 4.0 &&
+              instance.tail->get(instance.plugin) > 0,
+          "initial correction did not reach Preview");
+  processCommand(instance.plugin, 4);
+  require(instance.parameter(kStatus) == 5.0,
+          "initial correction did not Freeze");
+
+  // Moving back to Learn Target is a Target recapture, not a hidden full
+  // Reset. It must preserve the valid Reference while discarding the old
+  // Target and learned correction.
+  flushParameter(instance.plugin, kWorkflow, 2.0);
+  require(instance.parameter(kWorkflow) == 2.0 &&
+              instance.parameter(kLastCommand) == 2.0 &&
+              instance.parameter(kStatus) == 2.0,
+          "Target recapture discarded or rejected the retained Reference");
+  instance.plugin->on_main_thread(instance.plugin);
+  require(instance.parameter(kWorkflow) == 2.0 &&
+              instance.parameter(kStatus) == 2.0 &&
+              instance.tail->get(instance.plugin) > 0,
+          "Target recapture discarded the last-known-good correction fallback");
+
+  // A fresh Target can now be learned and corrected against the retained
+  // Reference without recording the Reference again.
+  processSignal(instance.plugin, target);
+  require(instance.parameter(kConfidence) > 0.0,
+          "recaptured Target never became usable");
+  processCommand(instance.plugin, 3);
+  instance.plugin->on_main_thread(instance.plugin);
+  require(instance.parameter(kStatus) == 4.0 &&
+              instance.tail->get(instance.plugin) > 0,
+          "recaptured Target could not reuse the retained Reference");
+
+  // Moving all the way back to Capture Reference is the higher-level reset:
+  // both captures and the learned correction are invalid from that point on.
+  flushParameter(instance.plugin, kWorkflow, 1.0);
+  require(instance.parameter(kWorkflow) == 1.0 &&
+              instance.parameter(kStatus) == 1.0,
+          "Reference recapture did not restart at Reference");
+  instance.plugin->on_main_thread(instance.plugin);
+  require(instance.tail->get(instance.plugin) > 0,
+          "Reference recapture discarded the last-known-good correction fallback");
+  flushParameter(instance.plugin, kWorkflow, 2.0);
+  require(instance.parameter(kWorkflow) == 1.0 &&
+              instance.parameter(kStatus) == 27.0,
+          "Reference recapture failed to invalidate the old Reference");
+
+  instance.plugin->stop_processing(instance.plugin);
+  instance.plugin->deactivate(instance.plugin);
+}
+
+void customMaxCaptureUsesSixtySeconds(
+    const clap_plugin_factory_t* factory,
+    const clap_plugin_descriptor_t* descriptor) {
+  HostState host;
+  PluginInstance instance(
+      factory->create_plugin(factory, &host.host, descriptor->id));
+  require(instance.plugin->activate(instance.plugin, 48000.0, 1, 16384),
+          "Custom Max activation failed");
+  require(instance.plugin->start_processing(instance.plugin),
+          "Custom Max processing start failed");
+
+  processParameter(instance.plugin, kMatchMode, 4.0);
+  require(instance.parameter(kMatchMode) == 4.0,
+          "Custom Max mode could not be selected");
+
+  // Request capture before servicing the main-thread growth callback. This
+  // proves that allocating the 60-second buffer is deferred off the audio path
+  // and that capture automatically begins once preparation completes.
+  flushParameter(instance.plugin, kWorkflow, 1.0);
+  require(instance.parameter(kWorkflow) == 1.0 &&
+              instance.parameter(kStatus) == 30.0,
+          "Custom Max capture did not enter deferred buffer preparation");
+  instance.plugin->on_main_thread(instance.plugin);
+  require(instance.parameter(kWorkflow) == 1.0 &&
+              instance.parameter(kStatus) == 1.0,
+          "Custom Max capture did not start after buffer preparation");
+
+  const auto feedSeconds = [&](int seconds) {
+    constexpr std::size_t blockFrames = 48000U;
+    std::array<std::vector<float>, 2> signal{
+        std::vector<float>(blockFrames), std::vector<float>(blockFrames)};
+    static std::size_t phaseFrame = 0;
+    constexpr double pi = 3.14159265358979323846;
+    for (int second = 0; second < seconds; ++second) {
+      for (std::size_t frame = 0; frame < blockFrames; ++frame, ++phaseFrame) {
+        const double t = static_cast<double>(phaseFrame) / 48000.0;
+        const float sample = static_cast<float>(
+            0.08 * std::sin(2.0 * pi * 233.0 * t) +
+            0.03 * std::sin(2.0 * pi * 1777.0 * t));
+        signal[0][frame] = sample;
+        signal[1][frame] = sample;
+      }
+      (void)processSignal(instance.plugin, signal);
+    }
+  };
+
+  feedSeconds(31);
+  require(instance.parameter(kCaptureTime) > 30.0 &&
+              instance.parameter(kStatus) != 7.0,
+          "Custom Max capture incorrectly filled at the standard 30-second limit");
+  feedSeconds(30);
+  require(instance.parameter(kCaptureTime) >= 59.9 &&
+              instance.parameter(kCaptureTime) <= 60.01 &&
+              instance.parameter(kStatus) == 7.0,
+          "Custom Max capture did not fill at about 60 seconds of accepted audio");
+
+  instance.plugin->stop_processing(instance.plugin);
+  instance.plugin->deactivate(instance.plugin);
+}
+
 void fullCaptureZeroConfidenceFallback(const clap_plugin_factory_t* factory,
                                        const clap_plugin_descriptor_t* descriptor) {
   HostState host;
@@ -722,6 +924,9 @@ void run(const char* modulePath,
   require(descriptor != nullptr &&
               std::strcmp(descriptor->id, "com.lanesaudio.tonetrace-eq") == 0,
           "plugin descriptor is invalid");
+  workflowSurvivesTransportAndFractionalOsaraStep(factory, descriptor);
+  recaptureInvalidatesOnlyDownstreamStages(factory, descriptor);
+  customMaxCaptureUsesSixtySeconds(factory, descriptor);
   fullCaptureZeroConfidenceFallback(factory, descriptor);
 
   HostState host;
@@ -753,6 +958,34 @@ void run(const char* modulePath,
               "invalid parameter descriptor");
       require((info.flags & CLAP_PARAM_IS_AUTOMATABLE) != 0,
               "a parameter is hidden from OSARA because it is not automatable");
+      if (info.id == kWorkflow || info.id == kMatchMode) {
+        require((info.flags & CLAP_PARAM_IS_ENUM) != 0,
+                "a named stepped choice is missing CLAP enum semantics");
+      }
+      // Pin the public 1.0.3 CLAP ranges. These values affect automation and
+      // restored projects, so a GUI/audit pass must not silently widen or
+      // narrow them. Status alone extends to 30 for Preparing Capture.
+      if (info.id == 150) {
+        require(info.min_value == 20.0 && info.max_value == 30000.0 &&
+                    info.default_value == 30000.0,
+                "Correction Range High drifted from the 1.0.3 contract");
+      } else if (info.id == 190) {
+        require(info.min_value == 0.5 && info.max_value == 1.5 &&
+                    info.default_value == 1.0,
+                "Correction Q / Sharpness drifted from the 1.0.3 contract");
+      } else if (info.id == 180) {
+        require(info.min_value == -24.0 && info.max_value == 12.0 &&
+                    info.default_value == 0.0,
+                "Correction Gain drifted from the 1.0.3 contract");
+      } else if (info.id == 270) {
+        require(info.min_value == -12.0 && info.max_value == 20.0 &&
+                    info.default_value == 6.0,
+                "Emergency Clip Guard drifted from the 1.0.3 contract");
+      } else if (info.id == kToneLevel) {
+        require(info.min_value == -60.0 && info.max_value == -12.0 &&
+                    info.default_value == -12.0,
+                "Confidence Tone Volume drifted from the 1.0.3 contract");
+      }
       ids.push_back(info.id);
       orderedIds.push_back(info.id);
     }
@@ -784,16 +1017,6 @@ void run(const char* modulePath,
                                                "Off", &parsedValue) &&
                 parsedValue == -60.0,
             "Confidence Tone Volume does not expose its accessible Off state");
-    require(instance.params->value_to_text(instance.plugin, kResolution, 1.0,
-                                           accessibleText,
-                                           sizeof(accessibleText)) &&
-                std::strcmp(accessibleText, "1 band") == 0 &&
-                instance.params->value_to_text(instance.plugin, kResolution,
-                                               2.0, accessibleText,
-                                               sizeof(accessibleText)) &&
-                std::strcmp(accessibleText, "2 bands") == 0,
-            "Correction Resolution does not use the same singular/plural text "
-            "in the host and native editor");
     require(instance.latency->get(instance.plugin) == 0 &&
                 instance.tail->get(instance.plugin) == 0,
             "ready plugin must be zero latency with no tail");
@@ -1278,8 +1501,9 @@ void run(const char* modulePath,
     processCommand(restored.plugin, 6);
     restored.plugin->on_main_thread(restored.plugin);
     require(restored.parameter(kStatus) == 0.0 &&
+                restored.parameter(kWorkflow) == 0.0 &&
                 restored.tail->get(restored.plugin) == 0,
-            "confirmed reset did not clear the profile");
+            "confirmed reset did not clear the profile and return Workflow Step to Ready");
     process(restored.plugin, silence, discarded);
     restored.plugin->on_main_thread(restored.plugin);
     restored.plugin->reset(restored.plugin);
