@@ -1,0 +1,26 @@
+name: Workflow state rebuild audit
+on:
+  push:
+    branches: [tmp/workflow-state-rebuild]
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Rebuild clean main tree
+        shell: bash
+        run: |
+          cp .tmp_workflow/rebuild_workflow.py /tmp/rebuild_workflow.py
+          git fetch origin main
+          git checkout -B workflow-audit origin/main
+          python /tmp/rebuild_workflow.py
+          git diff --check
+          ! grep -R "pendingWorkflowCommand_\|lastWorkflowStep_\|setWorkflowStep\|consumePendingWorkflowCommand\|consumeWorkflowCommandWhenIdle" -n plugins/clap/tonetrace_clap.cpp
+      - name: Configure
+        run: cmake -S . -B build-audit -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-audit --parallel 2
+      - name: Test
+        run: ctest --test-dir build-audit --output-on-failure
