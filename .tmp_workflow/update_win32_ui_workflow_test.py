@@ -27,6 +27,18 @@ one(
 'Win32 UI workflow event routing')
 
 one(
+'''  feedSeconds(plugin, 2.4, 1, 0.0);   // Capture Reference
+  feedSeconds(plugin, 3.2, 2, 1.7);   // Learn Target through low-confidence threshold
+  feedSeconds(plugin, 0.2, 3, 0.0);   // Correct Target schedules analysis''',
+'''  // This visual harness is not a confidence-speed test. Give both synthetic
+  // captures enough deterministic material to satisfy the same Low-confidence
+  // readiness rule used by the native UI and host/OSARA surfaces.
+  feedSeconds(plugin, 6.0, 1, 0.0);   // Capture Reference through Low confidence
+  feedSeconds(plugin, 6.0, 2, 1.7);   // Learn Target through Low confidence
+  feedSeconds(plugin, 0.2, 3, 0.0);   // Correct Target schedules analysis''',
+'Win32 UI shared readiness fixture')
+
+one(
 '''              ", workflow=" +
               std::to_string(static_cast<int>(valueOf(100))) +''',
 '''              ", stage=" +
@@ -34,4 +46,4 @@ one(
 'Win32 UI workflow diagnostic')
 
 p.write_text(text, encoding='utf-8')
-print('Win32 visual regression harness now drives explicit workflow actions')
+print('Win32 visual regression harness now drives explicit workflow actions with shared readiness')
