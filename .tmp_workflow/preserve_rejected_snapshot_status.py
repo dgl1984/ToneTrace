@@ -11,30 +11,22 @@ def one(old, new, label):
     text = text.replace(old, new)
 
 one(
-'''    destination->append(input, channels, count, sampleRate_,
-                        matchMode(value(tonetrace::ParameterId::MatchMode)));
-    const int newConfidence = destination->confidenceLevel;''',
-'''    destination->append(input, channels, count, sampleRate_,
-                        matchMode(value(tonetrace::ParameterId::MatchMode)));
-    const int newConfidence = destination->confidenceLevel;
-    if (phase == tonetrace::WorkflowPhase::CapturingTarget) {
-      const auto rejectedFrames =
-          rejectedTargetFrames_.load(std::memory_order_acquire);
-      if (rejectedFrames != kNoRejectedCaptureFrames) {
-        if (destination->validFrames <= rejectedFrames) {
-          // This is still the exact Target snapshot that failed validation.
-          // Silence, transport ticks, and other host housekeeping must not
-          // overwrite the actionable rejection message with live telemetry.
-          setStatus(Status::InvalidCapture);
-          return;
-        }
-        // New valid Target audio makes a retry meaningful. Resume normal live
-        // capture reporting and let a later Correct Target request revalidate.
-        rejectedTargetFrames_.store(kNoRejectedCaptureFrames,
-                                    std::memory_order_release);
-      }
-    }''',
-'preserve rejected target status')
+'''    const int oldConfidence = destination->confidenceLevel;
+    destination->append(input, channels, count, sampleRate_,
+                        matchMode(value(tonetrace::ParameterId::MatchMode)));''',
+'''    if (phase == tonetrace::WorkflowPhase::CapturingTarget &&
+        targetCaptureRejected_.load(std::memory_order_acquire)) {
+      // Validation rejected this exact Target snapshot. Freeze it until the
+      // user explicitly chooses Learn Target again (or starts over with
+      // Capture Reference); incidental audio/transport activity must not make
+      // a rejected capture look live or erase the actionable Status message.
+      setStatus(Status::InvalidCapture);
+      return;
+    }
+    const int oldConfidence = destination->confidenceLevel;
+    destination->append(input, channels, count, sampleRate_,
+                        matchMode(value(tonetrace::ParameterId::MatchMode)));''',
+'freeze rejected Target capture')
 
 one(
 '''    candidate.referenceDiagnostics = reference_.profileDiagnostics();
@@ -49,59 +41,57 @@ one(
     const auto validation = core_->commitCandidate(candidate);
     if (!validation.accepted) {
       if (validation.issue != tonetrace::ProfileIssue::RendererBusy) {
-        rejectedTargetFrames_.store(target_.validFrames,
-                                    std::memory_order_release);
+        targetCaptureRejected_.store(true, std::memory_order_release);
       }
       setStatus(validation.issue == tonetrace::ProfileIssue::RendererBusy
                     ? Status::RendererBusy
                     : Status::InvalidCapture);''',
-'record rejected target snapshot')
+'freeze Target after validation rejection')
 
 one(
 '''    setWorkflowPhase(tonetrace::WorkflowPhase::Preview);
     setValue(tonetrace::ParameterId::Confidence,''',
-'''    rejectedTargetFrames_.store(kNoRejectedCaptureFrames,
-                                std::memory_order_release);
+'''    targetCaptureRejected_.store(false, std::memory_order_release);
     setWorkflowPhase(tonetrace::WorkflowPhase::Preview);
     setValue(tonetrace::ParameterId::Confidence,''',
-'clear rejected snapshot after successful analysis')
+'clear rejected Target after successful analysis')
 
-# A deliberate new capture invalidates any previous rejection revision.
 for old, new, label in [
     ('''        target_.reset();
         setWorkflowPhase(tonetrace::WorkflowPhase::CapturingReference);''',
      '''        target_.reset();
-        rejectedTargetFrames_.store(kNoRejectedCaptureFrames,
-                                    std::memory_order_release);
+        targetCaptureRejected_.store(false, std::memory_order_release);
         setWorkflowPhase(tonetrace::WorkflowPhase::CapturingReference);''',
      'clear rejection on Capture Reference'),
     ('''          target_.reset();
           setStatus(Status::CapturingTarget);''',
      '''          target_.reset();
-          rejectedTargetFrames_.store(kNoRejectedCaptureFrames,
-                                      std::memory_order_release);
+          targetCaptureRejected_.store(false, std::memory_order_release);
           setStatus(Status::CapturingTarget);''',
      'clear rejection on repeated Learn Target'),
     ('''        target_.reset();
         setWorkflowPhase(tonetrace::WorkflowPhase::CapturingTarget);''',
      '''        target_.reset();
-        rejectedTargetFrames_.store(kNoRejectedCaptureFrames,
-                                    std::memory_order_release);
+        targetCaptureRejected_.store(false, std::memory_order_release);
         setWorkflowPhase(tonetrace::WorkflowPhase::CapturingTarget);''',
      'clear rejection entering Target')]:
     one(old, new, label)
 
 one(
+'''    case Status::InvalidCapture: return "Invalid or contaminated capture";''',
+'''    case Status::InvalidCapture:
+      return "Invalid or contaminated capture; choose Learn Target to recapture";''',
+'give rejected capture an explicit recovery action')
+
+one(
 '''  std::atomic<bool> controlBusy_{false};
   std::atomic<int> pendingEditorWorkflowAction_{0};
   std::atomic<bool> hasProfile_{false};''',
-'''  static constexpr std::uint64_t kNoRejectedCaptureFrames =
-      std::numeric_limits<std::uint64_t>::max();
-  std::atomic<bool> controlBusy_{false};
+'''  std::atomic<bool> controlBusy_{false};
   std::atomic<int> pendingEditorWorkflowAction_{0};
-  std::atomic<std::uint64_t> rejectedTargetFrames_{kNoRejectedCaptureFrames};
+  std::atomic<bool> targetCaptureRejected_{false};
   std::atomic<bool> hasProfile_{false};''',
-'rejected capture revision state')
+'rejected Target state')
 
 p.write_text(text, encoding='utf-8')
-print('analysis rejection remains visible until Target capture actually changes')
+print('rejected Target capture freezes until explicit recapture')
