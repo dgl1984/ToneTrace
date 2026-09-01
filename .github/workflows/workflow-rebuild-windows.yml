@@ -41,10 +41,12 @@ jobs:
           git grep -n -E 'pendingWorkflowCommand_|lastWorkflowStep_|setWorkflowStep|consumePendingWorkflowCommand|consumeWorkflowCommandWhenIdle' -- plugins/clap/tonetrace_clap.cpp plugins/clap/tonetrace_win32_editor.cpp
           if ($LASTEXITCODE -eq 0) { throw 'Legacy sticky workflow machinery remains' }
           if ($LASTEXITCODE -ne 1) { exit $LASTEXITCODE }
+          $global:LASTEXITCODE = 0
 
           git grep -n 'ParameterId::WorkflowAction' -- plugins/clap/tonetrace_clap.cpp plugins/clap/tonetrace_win32_editor.cpp tests/test_clap.cpp
           if ($LASTEXITCODE -eq 0) { throw 'Retired WorkflowAction remains in runtime/test code' }
           if ($LASTEXITCODE -ne 1) { exit $LASTEXITCODE }
+          $global:LASTEXITCODE = 0
       - name: Configure Windows Release
         run: cmake --preset windows-release
       - name: Build Windows Release
