@@ -24,7 +24,8 @@ jobs:
             'update_shared_gate_fixture.py',
             'freeze_capture_while_busy.py',
             'preserve_rejected_snapshot_status.py',
-            'diagnose_clipped_rejection.py'
+            'diagnose_clipped_rejection.py',
+            'update_win32_ui_workflow_test.py'
           )
           foreach ($script in $scripts) {
             Copy-Item ".tmp_workflow/$script" (Join-Path $temp $script)
@@ -43,7 +44,7 @@ jobs:
           if ($LASTEXITCODE -ne 1) { exit $LASTEXITCODE }
           $global:LASTEXITCODE = 0
 
-          git grep -n 'ParameterId::WorkflowAction' -- plugins/clap/tonetrace_clap.cpp plugins/clap/tonetrace_win32_editor.cpp tests/test_clap.cpp
+          git grep -n 'ParameterId::WorkflowAction' -- plugins/clap/tonetrace_clap.cpp plugins/clap/tonetrace_win32_editor.cpp tests/test_clap.cpp tests/test_win32_ui_regression.cpp
           if ($LASTEXITCODE -eq 0) { throw 'Retired WorkflowAction remains in runtime/test code' }
           if ($LASTEXITCODE -ne 1) { exit $LASTEXITCODE }
           $global:LASTEXITCODE = 0
