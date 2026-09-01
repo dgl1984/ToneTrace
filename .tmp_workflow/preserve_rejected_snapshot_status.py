@@ -58,12 +58,12 @@ one(
 'record rejected target snapshot')
 
 one(
-'''    hasProfile_.store(true, std::memory_order_release);
-    setWorkflowPhase(tonetrace::WorkflowPhase::Preview);''',
-'''    hasProfile_.store(true, std::memory_order_release);
-    rejectedTargetFrames_.store(kNoRejectedCaptureFrames,
+'''    setWorkflowPhase(tonetrace::WorkflowPhase::Preview);
+    setValue(tonetrace::ParameterId::Confidence,''',
+'''    rejectedTargetFrames_.store(kNoRejectedCaptureFrames,
                                 std::memory_order_release);
-    setWorkflowPhase(tonetrace::WorkflowPhase::Preview);''',
+    setWorkflowPhase(tonetrace::WorkflowPhase::Preview);
+    setValue(tonetrace::ParameterId::Confidence,''',
 'clear rejected snapshot after successful analysis')
 
 # A deliberate new capture invalidates any previous rejection revision.
