@@ -1,0 +1,78 @@
+name: Workflow rebuild Windows gate
+on:
+  push:
+    branches: [tmp/workflow-state-rebuild]
+jobs:
+  windows:
+    name: Windows x64 clean rebuild
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Reconstruct clean source from main
+        shell: pwsh
+        run: |
+          $temp = $env:RUNNER_TEMP
+          $scripts = @(
+            'rebuild_workflow.py',
+            'normalize_editor_setter.py',
+            'thread_handoff.py',
+            'editor_stage_cleanup.py',
+            'update_workflow_tests.py',
+            'fix_test_escaping.py',
+            'update_shared_gate_fixture.py',
+            'freeze_capture_while_busy.py',
+            'preserve_rejected_snapshot_status.py',
+            'diagnose_clipped_rejection.py'
+          )
+          foreach ($script in $scripts) {
+            Copy-Item ".tmp_workflow/$script" (Join-Path $temp $script)
+          }
+          git fetch origin main
+          git checkout -B workflow-audit origin/main
+          foreach ($script in $scripts) {
+            python (Join-Path $temp $script)
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          git grep -n -E 'pendingWorkflowCommand_|lastWorkflowStep_|setWorkflowStep|consumePendingWorkflowCommand|consumeWorkflowCommandWhenIdle' -- plugins/clap/tonetrace_clap.cpp plugins/clap/tonetrace_win32_editor.cpp
+          if ($LASTEXITCODE -eq 0) { throw 'Legacy sticky workflow machinery remains' }
+          if ($LASTEXITCODE -ne 1) { exit $LASTEXITCODE }
+
+          git grep -n 'ParameterId::WorkflowAction' -- plugins/clap/tonetrace_clap.cpp plugins/clap/tonetrace_win32_editor.cpp tests/test_clap.cpp
+          if ($LASTEXITCODE -eq 0) { throw 'Retired WorkflowAction remains in runtime/test code' }
+          if ($LASTEXITCODE -ne 1) { exit $LASTEXITCODE }
+      - name: Configure Windows Release
+        run: cmake --preset windows-release
+      - name: Build Windows Release
+        run: cmake --build --preset windows-release --parallel
+      - name: Test Windows Release
+        run: ctest --preset windows-release --output-on-failure
+      - name: Package exact audited source snapshot
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'ToneTrace_workflow_audit_source'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          $tracked = git ls-files
+          foreach ($relative in $tracked) {
+            $destination = Join-Path $stage $relative
+            $parent = Split-Path $destination -Parent
+            if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+            Copy-Item -LiteralPath $relative -Destination $destination
+          }
+          $archive = Join-Path $env:RUNNER_TEMP 'ToneTrace_workflow_audit_source.zip'
+          Push-Location $stage
+          cmake -E tar cf $archive --format=zip .
+          $archiveResult = $LASTEXITCODE
+          Pop-Location
+          if ($archiveResult -ne 0) { exit $archiveResult }
+          cmake -E sha256sum $archive
+      - name: Upload audited source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: ToneTrace_workflow_audit_source
+          path: ${{ runner.temp }}/ToneTrace_workflow_audit_source.zip
+          if-no-files-found: error
