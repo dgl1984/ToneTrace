@@ -13,11 +13,16 @@ jobs:
         shell: bash
         run: |
           cp .tmp_workflow/rebuild_workflow.py /tmp/rebuild_workflow.py
+          cp .tmp_workflow/thread_handoff.py /tmp/thread_handoff.py
+          cp .tmp_workflow/update_workflow_tests.py /tmp/update_workflow_tests.py
           git fetch origin main
           git checkout -B workflow-audit origin/main
           python /tmp/rebuild_workflow.py
+          python /tmp/thread_handoff.py
+          python /tmp/update_workflow_tests.py
           git diff --check
           ! grep -R "pendingWorkflowCommand_\|lastWorkflowStep_\|setWorkflowStep\|consumePendingWorkflowCommand\|consumeWorkflowCommandWhenIdle" -n plugins/clap/tonetrace_clap.cpp
+          ! grep -R "ParameterId::WorkflowAction" -n plugins/clap/tonetrace_clap.cpp plugins/clap/tonetrace_win32_editor.cpp tests/test_clap.cpp
       - name: Configure
         run: cmake -S . -B build-audit -DCMAKE_BUILD_TYPE=Release
       - name: Build
