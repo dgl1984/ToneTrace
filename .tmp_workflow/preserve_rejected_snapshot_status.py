@@ -37,12 +37,16 @@ one(
 'preserve rejected target status')
 
 one(
-'''    const auto validation = core_->commitCandidate(candidate);
+'''    candidate.referenceDiagnostics = reference_.profileDiagnostics();
+    candidate.targetDiagnostics = target_.profileDiagnostics();
+    const auto validation = core_->commitCandidate(candidate);
     if (!validation.accepted) {
       setStatus(validation.issue == tonetrace::ProfileIssue::RendererBusy
                     ? Status::RendererBusy
                     : Status::InvalidCapture);''',
-'''    const auto validation = core_->commitCandidate(candidate);
+'''    candidate.referenceDiagnostics = reference_.profileDiagnostics();
+    candidate.targetDiagnostics = target_.profileDiagnostics();
+    const auto validation = core_->commitCandidate(candidate);
     if (!validation.accepted) {
       if (validation.issue != tonetrace::ProfileIssue::RendererBusy) {
         rejectedTargetFrames_.store(target_.validFrames,
