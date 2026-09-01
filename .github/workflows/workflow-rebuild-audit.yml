@@ -22,6 +22,7 @@ jobs:
           cp .tmp_workflow/freeze_capture_while_busy.py /tmp/freeze_capture_while_busy.py
           cp .tmp_workflow/preserve_rejected_snapshot_status.py /tmp/preserve_rejected_snapshot_status.py
           cp .tmp_workflow/diagnose_clipped_rejection.py /tmp/diagnose_clipped_rejection.py
+          cp .tmp_workflow/update_win32_ui_workflow_test.py /tmp/update_win32_ui_workflow_test.py
           git fetch origin main
           git checkout -B workflow-audit origin/main
           python /tmp/rebuild_workflow.py
@@ -34,9 +35,10 @@ jobs:
           python /tmp/freeze_capture_while_busy.py
           python /tmp/preserve_rejected_snapshot_status.py
           python /tmp/diagnose_clipped_rejection.py
+          python /tmp/update_win32_ui_workflow_test.py
           git diff --check
           ! grep -R "pendingWorkflowCommand_\|lastWorkflowStep_\|setWorkflowStep\|consumePendingWorkflowCommand\|consumeWorkflowCommandWhenIdle" -n plugins/clap/tonetrace_clap.cpp plugins/clap/tonetrace_win32_editor.cpp
-          ! grep -R "ParameterId::WorkflowAction" -n plugins/clap/tonetrace_clap.cpp plugins/clap/tonetrace_win32_editor.cpp tests/test_clap.cpp
+          ! grep -R "ParameterId::WorkflowAction" -n plugins/clap/tonetrace_clap.cpp plugins/clap/tonetrace_win32_editor.cpp tests/test_clap.cpp tests/test_win32_ui_regression.cpp
       - name: Configure
         run: cmake -S . -B build-audit -DCMAKE_BUILD_TYPE=Release
       - name: Build
