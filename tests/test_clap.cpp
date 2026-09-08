@@ -82,6 +82,7 @@ struct HostState {
   clap_host_params_t params{};
   std::uint32_t callbacks = 0;
   std::uint32_t rescans = 0;
+  std::uint32_t restarts = 0;
 
   HostState() {
     host.clap_version = CLAP_VERSION;
@@ -107,7 +108,9 @@ struct HostState {
                                            const char* id) {
     return std::strcmp(id, CLAP_EXT_PARAMS) == 0 ? &self(host)->params : nullptr;
   }
-  static void CLAP_ABI requestRestart(const clap_host_t*) {}
+  static void CLAP_ABI requestRestart(const clap_host_t* host) {
+    ++self(host)->restarts;
+  }
   static void CLAP_ABI requestProcess(const clap_host_t*) {}
   static void CLAP_ABI requestCallback(const clap_host_t* host) {
     ++self(host)->callbacks;
@@ -1361,8 +1364,14 @@ void run(const char* modulePath,
     require(instance.parameter(kStatus) == 4.0,
             "pending replacement analysis did not resume after a state snapshot");
     MemoryInput activeLoad(saved.bytes);
-    require(!instance.state->load(instance.plugin, &activeLoad.stream),
-            "active state load should be rejected");
+    const auto restartsBeforeLoad = host.restarts;
+    require(instance.state->load(instance.plugin, &activeLoad.stream) &&
+                host.restarts == restartsBeforeLoad + 1,
+            "active state load must accept the model and request a restart");
+    MemoryOutput beforeRestart;
+    require(instance.state->save(instance.plugin, &beforeRestart.stream) &&
+                beforeRestart.bytes == saved.bytes,
+            "saving before the restart lost the incoming state");
 
     instance.plugin->stop_processing(instance.plugin);
     instance.plugin->deactivate(instance.plugin);
@@ -1449,6 +1458,129 @@ void run(const char* modulePath,
     }
     require(maximumError < 2.0e-5,
             "restored correction is not sample-equivalent");
+
+    // Model paste into an already activated destination, both stopped and
+    // processing. Include manual trims and a changed scalar parameter.
+    for (const bool playing : {false, true}) {
+      HostState pasteHost;
+      PluginInstance pasted(
+          factory->create_plugin(factory, &pasteHost.host, descriptor->id));
+      require(pasted.plugin->activate(pasted.plugin, 48000.0, 1, 16384),
+              "paste destination activation failed");
+      if (playing) {
+        require(pasted.plugin->start_processing(pasted.plugin),
+                "paste destination processing failed");
+      }
+      std::string trimmedState = saved.bytes;
+      const auto gain = trimmedState.find("manualgain 0\n");
+      require(gain != std::string::npos, "manual trim fixture is missing");
+      trimmedState.replace(gain, std::strlen("manualgain 0\n"), "manualgain 2.5\n");
+      const auto coreHeader = trimmedState.find("\ncore ");
+      const auto coreStart = trimmedState.find('\n', coreHeader + 1) + 1;
+      auto trimProject = tonetrace::deserializeProjectState(
+          trimmedState.substr(coreStart));
+      require(trimProject.snapshot != nullptr, "paste fixture lacks a model");
+      auto& render = trimProject.snapshot->renderSettings;
+      render.manualGains.assign(trimProject.snapshot->uncappedModel.resolution, 0.0);
+      render.manualGains.front() = 2.5;
+      render.correctionGainDb = -3.0;
+      const auto scalar = trimmedState.find("parameter 180 0\n");
+      require(scalar != std::string::npos, "scalar gain fixture is missing");
+      trimmedState.replace(scalar, std::strlen("parameter 180 0\n"),
+                           "parameter 180 -3\n");
+      const auto nested = tonetrace::serializeProjectState(trimProject.snapshot.get());
+      trimmedState.erase(trimmedState.find("\ncore ") + 1);
+      trimmedState += "core " + std::to_string(nested.size()) + "\n" + nested;
+      // Compare active paste with an ordinary inactive restoration.
+      PluginInstance expected(
+          factory->create_plugin(factory, &pasteHost.host, descriptor->id));
+      MemoryInput expectedInput(trimmedState);
+      require(expected.state->load(expected.plugin, &expectedInput.stream) &&
+                  expected.plugin->activate(expected.plugin, 48000.0, 1, 16384) &&
+                  expected.plugin->start_processing(expected.plugin),
+              "expected paste state could not activate");
+      const auto expectedImpulse = impulseResponse(expected.plugin, 10000);
+      MemoryInput earlierPaste(saved.bytes);
+      require(pasted.state->load(pasted.plugin, &earlierPaste.stream),
+              "first queued paste was rejected");
+      MemoryInput pasteInput(trimmedState);
+      require(pasted.state->load(pasted.plugin, &pasteInput.stream) &&
+                  pasteHost.restarts == 1,
+              "active destination rejected pasted model");
+      MemoryInput badPaste(malformed);
+      require(!pasted.state->load(pasted.plugin, &badPaste.stream),
+              "malformed paste replaced pending valid state");
+      if (playing) process(pasted.plugin, silence, discarded);
+      pasted.plugin->on_main_thread(pasted.plugin);
+      MemoryOutput pendingPaste;
+      require(pasted.state->save(pasted.plugin, &pendingPaste.stream) &&
+                  pendingPaste.bytes == trimmedState,
+              "pending paste did not survive a callback and invalid load");
+      if (playing) pasted.plugin->stop_processing(pasted.plugin);
+      pasted.plugin->deactivate(pasted.plugin);
+      MemoryOutput deactivatedPaste;
+      require(pasted.state->save(pasted.plugin, &deactivatedPaste.stream) &&
+                  deactivatedPaste.bytes == trimmedState,
+              "deactivation overwrote the incoming model");
+      require(pasted.plugin->activate(pasted.plugin, 48000.0, 1, 16384) &&
+                  pasted.plugin->start_processing(pasted.plugin),
+              "pasted model could not restart");
+      require(pasted.parameter(kStatus) == 5.0 &&
+                  pasted.parameter(kConfidence) > 0.0 &&
+                  pasted.tail->get(pasted.plugin) > 0 &&
+                  pasted.latency->get(pasted.plugin) == 0,
+              "pasted model lost its Frozen state or latency contract");
+      require(pasted.parameter(180) == -3.0,
+              "paste lost the correction gain parameter");
+      MemoryOutput appliedPaste;
+      require(pasted.state->save(pasted.plugin, &appliedPaste.stream) &&
+                  appliedPaste.bytes == trimmedState,
+              "restart changed the model, manual trims, or parameters");
+      pasted.plugin->reset(pasted.plugin);
+      const auto pastedImpulse = impulseResponse(pasted.plugin, 10000);
+      double pasteError = 0.0;
+      for (std::size_t i = 0; i < expectedImpulse.size(); ++i) {
+        pasteError = std::max(pasteError, std::abs(
+            static_cast<double>(expectedImpulse[i] - pastedImpulse[i])));
+      }
+      require(pasteError < 2.0e-5,
+              "active paste changed the rendered correction");
+      // Explicit restore must cancel unfinished learning, even at the same
+      // sample rate. Ready may still contain a non-flat manual-only curve.
+      processCommand(pasted.plugin, 1);
+      pasted.plugin->on_main_thread(pasted.plugin);
+      require(pasted.parameter(kWorkflow) == 1.0,
+              "capture did not start before manual-only restore");
+      std::string manualOnly = trimmedState.substr(0, trimmedState.find("\ncore ") + 1);
+      const auto readyCore = tonetrace::serializeProjectState(nullptr);
+      manualOnly += "core " + std::to_string(readyCore.size()) + "\n" + readyCore;
+      MemoryInput manualInput(manualOnly);
+      require(pasted.state->load(pasted.plugin, &manualInput.stream),
+              "active manual-only restore was rejected");
+      pasted.plugin->stop_processing(pasted.plugin);
+      pasted.plugin->deactivate(pasted.plugin);
+      require(pasted.plugin->activate(pasted.plugin, 48000.0, 1, 16384) &&
+                  pasted.plugin->start_processing(pasted.plugin),
+              "manual-only restart failed");
+      require(pasted.parameter(kStatus) == 0.0 &&
+                  pasted.parameter(kWorkflow) == 0.0 &&
+                  pasted.parameter(kCaptureTime) == 0.0 &&
+                  pasted.parameter(kConfidence) == 0.0 &&
+                  pasted.tail->get(pasted.plugin) > 0,
+              "manual-only restore retained the model or resumed learning");
+      MemoryOutput manualOutput;
+      require(pasted.state->save(pasted.plugin, &manualOutput.stream) &&
+                  manualOutput.bytes == manualOnly,
+              "manual-only restore lost its trims or parameters");
+      pasted.plugin->reset(pasted.plugin);
+      const auto manualImpulse = impulseResponse(pasted.plugin, 10000);
+      require(std::abs(manualImpulse.front() - 1.0F) > 1.0e-3F,
+              "manual-only restoration rendered an uncorrected impulse");
+      pasted.plugin->stop_processing(pasted.plugin);
+      pasted.plugin->deactivate(pasted.plugin);
+      expected.plugin->stop_processing(expected.plugin);
+      expected.plugin->deactivate(expected.plugin);
+    }
 
     std::array<std::vector<float>, 2> clippedTarget = target;
     for (auto& channel : clippedTarget) {

@@ -3,6 +3,26 @@
 All notable Tone Trace EQ changes are recorded here. Versions follow semantic
 versioning, and release dates use `YYYY-MM-DD`.
 
+## [1.0.5] - 2026-09-08
+
+### Fixed
+
+- Host state restoration now accepts a validated frozen model when the
+  destination CLAP instance is already activated, addressing a state-load
+  failure relevant to moving or copying effects between REAPER tracks.
+- Incoming models, manual band trims, and parameters remain available to
+  subsequent host saves while a safe restart is pending. Deactivation cannot
+  overwrite the incoming state with the destination's previous model.
+- Explicit restoration cancels unfinished learning; ordinary transport
+  stop/start continues to preserve in-progress capture.
+
+### Verification
+
+- Added active stopped/processing restore tests, repeated pending loads,
+  malformed-load protection, saves before/during restart, rendered correction
+  comparisons, manual-only restoration, and capture cancellation coverage.
+- Final REAPER cut/paste verification remains a manual release check.
+
 ## [1.0.4] - 2026-09-01
 
 ### Added

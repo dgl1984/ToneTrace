@@ -18,6 +18,7 @@ CLAP headers are vendored under `third_party/clap` with the upstream license not
 - Analysis and correction-filter preparation run off the audio thread.
 - Ready, Preview, and Frozen report zero samples of latency.
 - Host state snapshots serialize a validated last-known-good profile as Frozen, or Ready when none exists. Loading never resumes learning.
+- Active state loads retain the complete validated incoming state and request a host restart. Saves return that incoming state until activation applies it; deactivation cannot overwrite it with the outgoing model. Repeated loads retain the latest valid state, and malformed loads leave it intact.
 - Raw captured audio is never stored in the project. A same-sample-rate deactivate/reactivate preserves an in-progress raw Reference or Target in wrapper memory so transport Stop cannot behave like Reset; a real sample-rate change clears raw capture.
 - Invalid, clipped, incomplete, or damaged capture and project data cannot replace the last-known-good correction.
 - The host exposes one persistent Workflow Step containing Capture Reference through Cancel Reset. Small directional fractional host moves are snapped to the adjacent enum step for REAPER/OSARA compatibility. Reset remains protected by Arm/Confirm/Cancel within that control; the native Options dialog uses a standard confirmation before requesting the same destructive reset.

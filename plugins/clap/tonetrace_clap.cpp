@@ -1907,6 +1907,9 @@ class ToneTraceClap {
   }
 
   void performMainThreadWork() noexcept {
+    // A validated host restore supersedes work from the outgoing state.
+    // Keep the live renderer untouched until the host performs the restart.
+    if (!pendingWrapperState_.empty()) return;
     const std::uint32_t work = pendingWork_.exchange(WorkNone,
                                                      std::memory_order_acq_rel);
     try {
@@ -1989,6 +1992,8 @@ class ToneTraceClap {
   }
 
   std::string saveWrapperState() const {
+    // Hosts may save/copy again before honoring request_restart().
+    if (!pendingWrapperState_.empty()) return pendingWrapperState_;
     std::ostringstream stream;
     stream.precision(std::numeric_limits<double>::max_digits10);
     stream << "ToneTraceClapState 3\n";
@@ -2021,7 +2026,7 @@ class ToneTraceClap {
   }
 
   bool loadWrapperState(const std::string& bytes) {
-    if (active_.load(std::memory_order_acquire) || bytes.size() > kMaximumStateBytes) {
+    if (bytes.size() > kMaximumStateBytes) {
       return false;
     }
     std::istringstream stream(bytes);
@@ -2091,6 +2096,35 @@ class ToneTraceClap {
     // Validate the nested state before mutating any live parameter.
     const auto restoredProject =
         tonetrace::deserializeProjectState(restoredCore);
+    if (active_.load(std::memory_order_acquire)) {
+      // CLAP state.load is main-thread, not inactive-only. Replacing capture
+      // buffers and the core while process() can run would race the audio
+      // thread. Retain the entire validated state until a host restart.
+      if (host_ == nullptr || host_->request_restart == nullptr) return false;
+      const bool restartAlreadyRequested = !pendingWrapperState_.empty();
+      pendingWrapperState_ = bytes;
+      if (!restartAlreadyRequested) host_->request_restart(host_);
+      return true;
+    }
+    // An explicit restore replaces unfinished learning, unlike ordinary
+    // same-rate deactivate/reactivate, which preserves capture continuity.
+    pendingWork_.store(WorkNone, std::memory_order_release);
+    pendingWorkflowCommand_.store(0, std::memory_order_release);
+    pendingEditorConfirmedReset_.store(false, std::memory_order_release);
+    pendingReferenceCaptureStart_.store(false, std::memory_order_release);
+    pendingImportKind_.store(0, std::memory_order_release);
+    controlBusy_.store(false, std::memory_order_release);
+    resetArmed_.store(false, std::memory_order_release);
+    phase_.store(restoredProject.phase, std::memory_order_release);
+    reference_.reset();
+    target_.reset();
+    hasImportedReference_.store(false, std::memory_order_release);
+    hasImportedTarget_.store(false, std::memory_order_release);
+    stagedReferenceValid_.store(false, std::memory_order_release);
+    importedReference_.reset();
+    importedTarget_.reset();
+    stagedReferenceForExport_.reset();
+    setValue(tonetrace::ParameterId::CaptureSeconds, 0.0, true);
     for (const auto& [index, restored] : restoredValues) {
       values_[index]->store(restored, std::memory_order_release);
     }
@@ -2115,6 +2149,7 @@ class ToneTraceClap {
       setStatus(Status::Ready);
     }
     pendingCoreState_ = std::move(restoredCore);
+    pendingWrapperState_.clear();
     notifyParameterValuesChanged();
     return true;
   }
@@ -2168,6 +2203,10 @@ class ToneTraceClap {
       return false;
     }
     try {
+      if (!instance->pendingWrapperState_.empty() &&
+          !instance->loadWrapperState(instance->pendingWrapperState_)) {
+        return false;
+      }
       const int requestedSampleRate = static_cast<int>(std::lround(sampleRate));
       const auto preservedPhase =
           instance->phase_.load(std::memory_order_acquire);
@@ -2285,7 +2324,7 @@ class ToneTraceClap {
     auto* instance = self(plugin);
     if (instance == nullptr) return;
     try {
-      if (instance->core_ != nullptr) {
+      if (instance->core_ != nullptr && instance->pendingWrapperState_.empty()) {
         instance->pendingCoreState_ = instance->core_->saveProjectState();
       }
     } catch (const std::exception&) {
@@ -2944,6 +2983,8 @@ class ToneTraceClap {
   std::array<std::vector<float>, 2> scratchOutput_;
   std::unique_ptr<tonetrace::HeadlessPluginCore> core_;
   std::string pendingCoreState_;
+  // Main-thread only; authoritative for saves until the requested restart.
+  std::string pendingWrapperState_;
   // Import slots written by the editor (UI thread) and consumed on the main
   // thread via WorkImport; the mutex guards the payloads, the atomic guards
   // the hand-off flag.
