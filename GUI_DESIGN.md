@@ -1,172 +1,37 @@
-# Tone Trace EQ native GUI + accessibility design
+# Tone Trace JUCE editor
 
-Status: implemented for Tone Trace EQ 1.0. The Win32 editor remains a thin
-accessible shell over the regression-tested CLAP parameter surface and shared
-engine.
+The Windows VST3 and CLAP formats share one editor. Released 1.0.5 behavior is
+the reference; the framework and layout have changed, not the matching features.
+The legacy Win32 editor remains in `plugins/clap` for reference.
 
-## Principles
+The Capture page contains the four workflow actions, Match Mode, Options,
+import/export, Status, Curve Description, and Copy Curve Description. The
+Correction page contains the global numeric and safety controls. Bands pages
+use balanced groups of at most ten faders, each with a frequency label and an
+exact dB value. Resolution is also available on each Bands page.
 
-1. **The CLAP parameter surface stays authoritative.** The GUI is a thin native
-   shell. Every value it shows is read through `clap_plugin_params_t`; every
-   edit it makes goes through the same set-value path the host uses. There is no
-   second source of truth.
-2. **Painted is not accessible.** Everything drawn on the canvas is visual only.
-   The screen-reader surface is a set of native Win32 controls, most importantly
-   a **readonly description box** that describes the curves in words.
-3. **Keyboard is first-class.** Tab order follows workflow, arrows move the
-   trace cursor, one explicit "Describe curves" command fills the description
-   box, and `EVENT_OBJECT_VALUECHANGE` on that box lets NVDA announce it once.
-4. **Silent by default.** Real-time painted elements (the live trace, meters)
-   never announce continuously, matching the OptiLab meter doctrine.
+The graph, Curve Readout, and Trace Curve toggle remain available across pages.
+Reference (warm) means the desired sound; Target (blue) means the sound being
+corrected; Correction (thick light line) shows the tonal EQ. The graph is visual
+only. Curve Description uses the released description engine; Curve Readout
+provides exact frequency and curve values for pointer or keyboard navigation.
 
-## Canvas: the tone trace, drawn literally
+JUCE controls expose accessible names, roles, and values. Bands intentionally
+provide a string Value interface with dB units rather than RangeValue, avoiding
+percentage substitution. Values retain up to three meaningful decimals.
+Adjacent frequency labels gain precision when rounding would duplicate a name.
+Status telemetry is throttled while focused.
 
-The engine's `ProfileSnapshot` (reference capture, target capture, correction
-model) is drawn on a log-frequency (20 Hz-20 kHz) by dB graph with a dark
-background and readable light grid. The vertical display range adapts to the
-material instead of hard-clipping every curve at +/-12 dB, and dedicated top
-and bottom margins keep frequency labels and the legend out of the curves. Edge
-labels remain inside the graph so neighboring panels cannot cover them.
-Three curves:
+Left/Right navigates bands, including page boundaries; Up/Down changes the
+selected band's final value by 1 dB, Page Up/Down by 6 dB, Home/End selects its
+limits, and 0/N neutralizes it. Enter opens exact entry. T/F2 toggles Trace Curve.
+Ctrl+Tab and Ctrl+Shift+Tab switch pages. Text entry and ordinary controls retain
+their own editing/navigation keys. Wheel steps are 1 dB, or 6 dB with Shift;
+double-click neutralizes a band. Range masking preserves the learned band grid.
 
-- **Reference** curve: one hue, thin stroke. Identifies what the source tone
-  *is*.
-- **Target** curve: a second hue, thin stroke. Identifies what the tone should
-  *become*.
-- **Correction** curve: thick, high-contrast stroke derived from the model.
-  It is the visual centerpiece, matching the professional convention that the
-  result curve is the thickest line (Pro-Q yellow, Ozone white).
+Import/export and reset confirmations are accessible JUCE dialogs. Notification
+and navigation tones are suppressed when disabled, bypassed, or offline. The
+stopped-transport fallback preserves the released band-tone/page-sweep policy.
 
-Line **thickness encodes prominence/role**; line **hue encodes identity**. This
-is the plugin's own encoding, not a copy of any single product.
-
-Canvas interactions:
-
-- Mouse hover moves a vertical readout cursor; the exact frequency/dB of each
-  curve at that point is shown in the status area (sighted).
-- The pointer becomes a crosshair over the Match plot, and the hover cursor is
-  visibly repainted as it moves instead of changing only the text readout.
-- Arrow keys move the same cursor (blind + keyboard).
-- The readonly Curve Description box contains a natural-language summary using
-  plain EQ terms and explicit frequencies, e.g. *"Correction: boosts about 3 dB
-  from 80 to 180 Hz, cuts about 2 dB from 700 Hz to 2 kHz, then boosts about
-  4 dB from 7 to 12 kHz."* Reference and Target measurements use higher/lower
-  language; boost/cut is reserved for the actual Correction. Subjective zone
-  names such as presence/air and smile/frown shorthand are deliberately avoided.
-
-## Accessibility surface (native controls)
-
-| Control | Role | Purpose |
-| --- | --- | --- |
-| Curve description label | STATIC | Native accessible name for the description edit; never painted-only |
-| Curve description box | READONLY multiline EDIT | Natural-language description of all curves; sole non-visual curve reading |
-| Trace/readout box | READONLY EDIT; wraps visually on band pages | Starts with a concise Curve Readout purpose message; then provides exact Hz/dB on Match, transient action messages, and focused-band detail |
-| Capture Reference / Learn Target / Correct / Freeze | BUTTONs | Mirror values 1–4 of the single persistent CLAP Workflow Step; Learn Target saves the Reference first, then begins Target capture |
-| Match Mode | labeled COMBOBOX (named options) | Voice default; Full Mix / Voice / Drums / Bass+Synth / Custom |
-| Correction Resolution | labeled COMBOBOX on Bands pages | 1–120 bands; mirrors the host parameter and rebuilds the editable pages |
-| Range low / high, strength, correction ceiling, etc. | exact-value EDITs | Continuous params, committed on kill-focus |
-| Status label + panel | STATIC + READONLY multiline EDIT | Current status plus Capture Time, Confidence, Curve Drift, and Last Action; fast telemetry is throttled while focused |
-| Options... | BUTTON | Opens a native modal dialog for Full Correction Range, tone controls, Bypass, and protected Reset |
-| Legend rows | per-curve STATIC+color swatch | Names each curve for tabbing |
-
-Rules from the OptiLab study applied here:
-
-- Enumerated params → COMBOBOX with named items built from `value_to_text`.
-- Continuous params → exact-value EDIT, committed on `EN_KILLFOCUS`, parsed
-  with `text_to_value`, reverted to last valid value on parse failure.
-- Every control has a real accessible name. Labels are native STATIC controls
-  adjacent to what they name in Z-order and retain their complete text; painted
-  captions are never treated as an accessibility surface.
-- The painted canvas creates **no** accessible object; it is not a tab stop.
-- The description box and readout announce via `NotifyWinEvent` on demand only.
-- The multiline Status panel refreshes immediately when Status/Last Action changes. Capture Time and Curve Drift refresh at a limited rate and pause while the Status field has focus so NVDA/Narrator are not flooded by telemetry value changes.
-- Band pages use the full editor width and prefer at most 10 bands per page. A
-  non-multiple is rebalanced so there is no nearly empty final tab. The native
-  tab control always uses complete **Bands N-M** captions and relies on its
-  native scroll arrows when all pages do not fit.
-- Each band is one dedicated `ToneTraceAccessibleFader` HWND with the same
-  concise accessible name and a single tab stop. MSAA exposes the canonical dB
-  value used by NVDA; UI Automation exposes that same unit-bearing string through
-  the Value pattern rather than RangeValue, preventing Narrator from substituting
-  a percentage. Its custom paint presents the HWND as a vertical graphic-EQ
-  fader with a visible 0 dB center mark, movable thumb, frequency label above,
-  and exact dB readout below. Mouse click/drag edits the same underlying band;
-  double-click centers it.
-- Band values share one public formatter with up to three meaningful decimal
-  places across painting, exact entry, MSAA, UI Automation, and readouts. The
-  1 dB and 6 dB edit routes add to the fractional value instead of rounding it
-  to an integer first.
-- Rebuilding pages after a live Correction Resolution change redraws the native
-  tab strip and emits standard reorder/name-change events so visible captions
-  and cached screen-reader tab labels stay synchronized. A change made in the
-  native combo keeps focus there; an external change made while a band is
-  focused restores the nearest corresponding band.
-- Band center labels use the normal concise frequency format until rounding
-  would give adjacent bands the same caption. Only that collision is expanded
-  to the precision needed to keep the visible and spoken band names distinct.
-- Bands pages reclaim the lower area used by Match-only controls, which keeps
-  faders practical at the editor's minimum size.
-- IR export accepts the same manual-only curve used by standalone graphic-EQ
-  operation. With no learned match, a nonzero band or Correction Gain opens a
-  standard Windows OK/Cancel warning whose title contains the complete decision
-  for screen-reader speech, with OK focused and default; a completely flat
-  unmatched instance keeps the existing no-curve error.
-- The mouse wheel adjusts a hovered/focused band in the same 1 dB steps as the
-  arrow keys. Hover, focus, positive movement, and negative movement use
-  distinct visual states.
-- Workflow actions remain native push buttons but use owner-drawn numbering,
-  grouping, hover, pressed, focus, and current-step states. Their HWNDs,
-  accessible names, roles, commands, and tab order do not change.
-- The action row allocates extra width to the longer workflow and Copy Curve
-  Description captions while the short Export/Import actions donate unused
-  space. Full visible captions therefore remain consistent with the native
-  accessible names instead of being abbreviated or ellipsized.
-- The learned band grid is stable. Correction Range Low/High never move or
-  renumber band frequencies; they mask the effective correction symmetrically.
-  Bands outside either boundary show/announce 0 dB while their learned values
-  and manual trims remain stored for immediate restoration if the range reopens.
-- Band-page guidance is deliberately concise so the complete keyboard help fits
-  without clipping or forcing a long announcement. `0` centers the focused band
-  at 0 dB; `N` remains as a compatible alias.
-- Trace Curve is a push-like toggle beside the always-visible readout rather
-  than a low-contrast checkbox floating in unused page space.
-- The visible **Learn Target** caption stays short. Pointer users get a tooltip
-  explaining that it saves the captured Reference and then begins Target
-  capture, while the host generic Workflow Step keeps the explicit
-  **Save Reference and Learn Target** wording. A committed Reference can be
-  exported before a Target match is completed. Returning to Learn Target from
-  Preview/Frozen recaptures only the Target and preserves the Reference.
-- Tooltip registration uses the Windows `TTTOOLINFOW_V2_SIZE` contract. This
-  keeps all eight action/control tooltips available in hosts with either legacy
-  Common Controls or a version 6 manifest.
-- Less-frequently changed controls stay behind the native **Options...** button rather than crowding the Match page. The dialog uses standard Windows controls and leaves the same parameters available through the host generic surface.
-- Static labels and readonly dark-panel text use explicit high-contrast colors;
-  exact-value boxes retain a light edit background.
-
-## Architecture (mirrors the reference implementation)
-
-```
-clap_plugin_t ── CLAP_EXT_GUI ──> ToneTraceWin32Editor
-                                     │ holds clap_plugin_params_t* (read/write)
-                                     │ + function-pointer bridge to instance:
-                                     │   getSnapshot(), getParamInfo(), setParam()
-                                     ▼
-                              ToneTraceClap instance (owns HeadlessPluginCore)
-```
-
-- `guiCreate` builds the editor and hands it the params extension plus bridge
-  callbacks (same shape as the reference editor). No audio-thread access.
-- Editor redraws on a 30 Hz timer only while shown and realtime; the timer is
-  stopped while offline/hidden so NVDA is never flooded.
-- Resizable; the preferred size, minimum size, fonts, controls, and painted
-  details all use the same host-provided `px()` scale. A scale change after the
-  editor is attached rebuilds its fonts and lays the controls out again. The
-  canvas keeps a stable aspect so curves do not distort on resize.
-
-## Explicit non-goals
-
-- No editing of the curve directly on the canvas in v1 (params control it).
-- No state stored in the GUI; project state remains owned by the core.
-- The GUI must not change DSP behaviour, automation contract, or state format.
-- The whole editor compiles behind a build flag so the headless build stays
-  bit-identical where a host never opens a window.
+Automated layout and keyboard checks use the actual editor. Final host and
+screen-reader verification must also exercise the packaged binaries.

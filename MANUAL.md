@@ -8,7 +8,7 @@ The unusual part is what happens next. Tone Trace does not treat the generated m
 
 This manual starts with the practical workflow. The more technical details are kept for the sections where they help explain a control or behavior rather than being required knowledge up front.
 
-Current version: **1.0.5**.
+Version covered: **1.1.0 for Windows**, available as VST3 and CLAP.
 
 ## The one distinction to get right
 
@@ -40,22 +40,24 @@ Freeze ends learning, not editing. You can continue working with the finished co
 A built Windows package contains:
 
 - `plugins\clap\Tone Trace EQ.clap`
+- `plugins\vst3\Tone Trace EQ.vst3` (copy this entire bundle directory)
 - documentation under `docs\`
-- `LICENSE` and the vendored CLAP license under `licenses\clap\`
+- `LICENSE` and dependency notices under `licenses\`
 
 It intentionally does not contain an installer, developer tools, tests, or debug symbols. Per-file hashes are in `docs\BUILD_MANIFEST.txt`.
 
 Typical system-wide plug-in locations are:
 
 - CLAP: `C:\Program Files\Common Files\CLAP\`
+- VST3: `C:\Program Files\Common Files\VST3\`
 
-Copy the CLAP plug-in into the appropriate folder, then rescan plug-ins in your DAW if necessary.
+Copy either or both plug-in formats into their appropriate folders, then rescan plug-ins in your DAW if necessary.
 
-The native Tone Trace editor is currently a **Windows Win32 editor**. The plug-in's global parameters are also available through the host's generic parameter view.
+Both Windows formats use the same editor. The plug-in's global parameters are also available through the host's generic parameter view.
 
 ### Plug-in format
 
-Tone Trace EQ 1.0.5 ships as **CLAP**. The CLAP implementation is the tested reference release and contains the complete Tone Trace workflow and matching engine.
+The 1.1.0 Windows package contains **VST3 and CLAP**, and both use the same Tone Trace processor and editor. Existing 1.0.5 CLAP projects can be opened by 1.1.0. Keep a backup before updating important projects, because a project saved by 1.1.0 should not be expected to reopen correctly in 1.0.5. VST3 is a separate plug-in identity, so an existing CLAP instance does not silently turn into VST3.
 
 ## 2. What Tone Trace is doing
 
@@ -67,7 +69,7 @@ Tone Trace also separates **tone** from **level**. A louder Reference does not a
 
 After Correct, the retained captures remain useful. Changing Match Mode asks Tone Trace to interpret the same pair differently. Changing Correction Resolution changes the manual editing grid rather than forcing another recording. Limiting Correction Range Low or High stops the effective correction outside the selected part of the spectrum without erasing the learned relationship underneath it.
 
-The correction itself is a normal causal, minimum-phase EQ response, so it can run without lookahead or reported plug-in latency after learning. The same response can also be written as an impulse response. More implementation detail is covered later in the IR and design sections; none of it is required to make a good match.
+The correction itself is a normal causal, minimum-phase EQ response, so it can run without lookahead or reported plug-in latency after learning. The same response can also be written as an impulse response. You do not need to know any of that to make a good match, but it explains why a finished correction can work both live and as an exported IR.
 
 Tone Trace is an EQ matcher, not a compressor or mastering limiter. A large EQ boost can still create a large peak, so leave sensible headroom.
 
@@ -144,7 +146,7 @@ You can stop playback after capturing the Reference while you prepare or load th
 
 ### Learn Target
 
-Choose **Learn Target** in the Windows editor. This does two things in order: it saves the current Reference, then begins a fresh Target capture. In the host generic parameter view, the same Workflow Step is named **Save Reference and Learn Target**. If you return to Learn Target after Preview or Freeze, Tone Trace keeps the valid Reference and starts a fresh Target capture rather than forcing you to capture the Reference again.
+Choose **Learn Target** in the editor. This does two things in order: it saves the current Reference, then begins a fresh Target capture. In the host generic parameter view, the same Workflow Step is named **Save Reference and Learn Target**. If you return to Learn Target after Preview or Freeze, Tone Trace keeps the valid Reference and starts a fresh Target capture rather than forcing you to capture the Reference again.
 
 Because the Reference is committed first, you can use **Export → Reference Curve (`.tts`)** immediately afterward if your only goal is to create a reusable Reference rather than complete a match.
 
@@ -183,13 +185,13 @@ Reset is intentionally two-step and is exposed through the host's **Workflow Ste
 1. **Arm Reset**
 2. **Confirm Reset**
 
-Use **Cancel Reset** to return to the previous state without deleting the profile. The native Windows editor keeps Reset out of the main workflow row: **Options... → Reset Tone Trace...** opens a standard confirmation dialog. The host generic parameter view still keeps Arm Reset, Confirm Reset, and Cancel Reset inside the single persistent Workflow Step control.
+Use **Cancel Reset** to return to the previous state without deleting the profile. The editor keeps Reset out of the main workflow row: **Options... → Reset Tone Trace...** opens a standard confirmation dialog. The host generic parameter view still keeps Arm Reset, Confirm Reset, and Cancel Reset inside the single persistent Workflow Step control.
 
 ## 5. Confidence, stability, and capture status
 
 ### Capture Confidence
 
-**Capture Confidence** is a read-only reliability indicator for the material accepted so far. Internally the live workflow uses four practical levels: none, low, medium, and high. Some hosts display those as values between 0 and 1.
+**Capture Confidence** is a read-only reliability indicator for the material accepted so far. Tone Trace reports four practical levels: none, low, medium, and high. Some hosts display the same information as values between 0 and 1.
 
 Confidence is not a promise that the capture represents everything the source can do. A highly repetitive few seconds can become statistically stable without being representative of the whole voice, instrument, or mix.
 
@@ -215,7 +217,7 @@ Confidence is not a promise that the capture represents everything the source ca
 | `Frozen correction` | Learning is stopped; the saved correction is active. |
 | `Capture full; continue workflow` | The accepted-audio buffer is full: about 30 seconds in standard modes or 60 seconds in Custom Max Capture. Continue to the next workflow step. |
 | `Invalid or contaminated capture` | A requested operation could not use the current audio or imported data. |
-| `Correction update still completing` | A previous correction kernel is still crossfading. This should be brief; wait for the transition to finish before making another correction-changing edit. |
+| `Correction update still completing` | Tone Trace is still finishing the previous correction change. This should be brief; wait for it to settle before making another correction-changing edit. |
 | `Frozen; setup changed; relearn recommended` | The current profile is preserved, but a setup change means a new capture may be more appropriate. |
 | `Setup locked; reset or restart capture` | A protected setup control was changed during capture and was refused. |
 
@@ -243,11 +245,9 @@ There is one deliberate limitation: the raw recordings are not stored in the pro
 
 ## 7. Main controls
 
-The Windows Match page keeps the controls used most often in front of you: Match Mode, Correction Strength, Maximum Correction, Correction Gain, Q / Sharpness, the low/high correction range, and Emergency Clip Guard. **Correction Resolution** has its own labeled control on every Bands page. It also remains available through the host's generic parameter view, along with less frequently changed global options such as **Full Correction Range**, tone-notification settings, Bypass, and the Reset workflow.
+The Capture page provides the capture workflow, Match Mode, import/export, Status, and Curve Description. The Correction page provides Correction Strength, Maximum Correction, Correction Gain, Q / Sharpness, low/high correction range, Emergency Clip Guard, resolution, and global options. **Correction Resolution** has its own labeled control on every Bands page. It also remains available through the host's generic parameter view, along with less frequently changed global options such as **Full Correction Range**, tone-notification settings, Bypass, and the Reset workflow.
 
-When you type a number into one of the Match-page value boxes, press **Enter**
-to apply it immediately, or press **Tab** to apply it and move to the next
-control.
+On a numeric slider, press **Enter** to open exact entry. Type the value and press **Enter** to apply, **Tab** to apply and move onward, or **Escape** to cancel. Invalid values are rejected. Use **Ctrl+Tab** and **Ctrl+Shift+Tab** to switch pages.
 
 ### Maximum Correction
 
@@ -261,7 +261,7 @@ Eighteen dB is a sensible starting ceiling for ordinary matching. Larger values 
 
 Default: **Off**.
 
-With this switch **Off**, **Maximum Correction** sets the largest learned boost or cut Tone Trace may apply. Turn **Full Correction Range** **On** to ignore that user-set ceiling and allow the learned correction to use Tone Trace's full supported range, up to the 60 dB internal numerical guard.
+With this switch **Off**, **Maximum Correction** sets the largest learned boost or cut Tone Trace may apply. Turn **Full Correction Range** **On** when you deliberately want Tone Trace to go beyond that ceiling and use the full correction range available to it. This is mainly useful for difficult restoration work or other cases where an unusually large correction is intentional.
 
 This switch does **not** perform a different or more accurate analysis. If Maximum Correction is already set to 60 dB, turning it on will not make the match more complete. It simply permits larger EQ moves.
 
@@ -282,7 +282,7 @@ Negative strength is useful for checking the inverse relationship or for special
 
 Range: **1 to 120 bands**. Default: **30**.
 
-Controls the number of editable trace bands. The captured spectra and learned model retain their higher internal resolution; this control determines the manual editing grid.
+Controls the number of editable trace bands. Tone Trace keeps a finer version of the captured relationship underneath; this control determines the manual editing grid you work with.
 
 You can change Correction Resolution **after a match has already been calculated**. Tone Trace rebuilds the editable grid from the retained high-resolution capture/model data, so moving from 30 to 60 bands does not require another Reference capture, Target capture, or Correct Target pass. More bands give you finer manual editing points; they do not make the underlying analysis twice as accurate.
 
@@ -324,13 +324,13 @@ A global output trim added to the correction. Use it for level management; Tone 
 
 Range: **-12 to +20 dBFS**. Default: **+6 dBFS**.
 
-A hard, last-resort output ceiling. It is deliberately simple and nonlinear. It is not intended to replace a transparent limiter.
+This is a blunt, low-resource last-resort clip guard. It exists to stop an extreme correction from running away; it is not supposed to replace a good limiter. If you are leaning on it regularly, fix the gain structure or put a limiter you trust after Tone Trace.
 
 The guard is plug-in-only. Exported impulse responses remain linear and do not contain it.
 
 ### Tone Notifications
 
-Turns confidence and warning tones on or off. The intended default is **On**.
+Turns Tone Trace's generated feedback tones on or off, including confidence tones, warning sweeps, page sweeps, and Trace Curve navigation tones. The intended default is **On**.
 
 ### Confidence Tone Volume
 
@@ -342,23 +342,23 @@ Default: **Off**.
 
 Bypass crossfades Tone Trace to the **dry input**. It does not mute the track. While bypassed, the correction, notification tones, and Emergency Clip Guard are not applied to the output.
 
-## 8. The Windows editor and accessibility
+## 8. The editor and accessibility
 
-Tone Trace's Windows editor uses real Win32 controls for keyboard and screen-reader access. The visual curve is supplementary; you do not need to interpret the graph to operate the plug-in.
+Tone Trace is meant to be fully usable whether you work visually, by keyboard, or with a screen reader. The graph is useful if you want it, but you never need to see or understand the graph to operate the plug-in. Keyboard focus follows the controls you are actually working with, and screen readers receive the same names and values that are shown visually.
 
 The read-only text box containing the natural-language curve summary has the
-native accessible label **Curve Description**. Its displayed text is the value,
+accessible label **Curve Description**. Its displayed text is the value,
 not the control name. Reference and Target descriptions use **higher** and
 **lower** because they describe measured spectral relationships. **Boost** and
 **cut** are reserved for the Correction Tone Trace actually applies. When
 Maximum Correction limits a larger learned move, the description reports both
 the learned and applied values.
 
-The host's generic parameter view exposes the global workflow, matching controls, safety controls, and live status. Correction Resolution is deliberately available there and in the native Bands pages. The native editor additionally provides the trace-band editor, curve descriptions, Import/Export commands, a compact **Options...** dialog for less-frequently changed controls, and a labeled multiline **Status** panel. The Status panel updates immediately for meaningful workflow changes while fast Capture Time and Curve Drift telemetry is throttled so a focused read-only field does not become continuous screen-reader chatter.
+The host's generic parameter view exposes the global workflow, matching controls, safety controls, and live status. Correction Resolution is deliberately available there and in the Bands pages. The editor additionally provides the trace-band editor, curve descriptions, Import/Export commands, a compact **Options...** dialog for less-frequently changed controls, and a labeled multiline **Status** panel. Status changes are announced when they matter without turning fast-moving Capture Time and Curve Drift updates into constant screen-reader chatter.
 
 ### Reading the Match graph
 
-The Match page draws three curves:
+The graph draws three curves:
 
 - **Reference** — the sound you want to match, shown as a thin warm-colored line.
 - **Target** — the sound being corrected, shown as a thin blue line.
@@ -368,7 +368,7 @@ Reference and Target are displayed relative to their own broad level so the grap
 
 The graph's vertical range adapts to the captured material instead of forcing every trace into a fixed +/-12 dB window. A small `+/- N dB` label shows the current visual range. This affects only the drawing; it does not change the learned match. Exact frequency and dB values remain available in the readout and Curve Description box, so the graph is never required for operation.
 
-Moving the pointer across the graph places a dotted cursor line, and a small label beside it names the frequency under the pointer. The same frequency — together with the Reference, Target, and Correction values at that point — always appears in the readout below the graph, so the hover label is a convenience for sighted pointer use and never the only source of the value. On a new instance, the readout identifies itself as **Curve Readout** and briefly explains that moving over the graph or using Trace Curve will expose exact values.
+Moving the pointer across the graph places a dotted cursor line, and a small label beside it names the frequency under the pointer. The same frequency — together with the Reference, Target, and Correction values at that point — always appears in the readout above the graph, so the hover label is a convenience for sighted pointer use and never the only source of the value. On a new instance, the readout identifies itself as **Curve Readout** and briefly explains that moving over the graph or using Trace Curve will expose exact values.
 
 ### Trace-band keyboard controls
 
@@ -380,10 +380,11 @@ Moving the pointer across the graph places a dotted cursor line, and a small lab
 | **Home / End** | Jump to the allowed band extremes |
 | **0** (or **N**) | Center the selected band at 0 dB |
 | **T** or **F2** | Toggle Trace Curve mode |
+| **Enter** | Edit the focused band using an exact value |
 
-Each band is drawn visually as a vertical graphic-EQ fader, with its frequency above it, a clear 0 dB center mark, and the exact final dB value below the fader. Sighted users can click or drag a fader, use the mouse wheel for 1 dB steps (hold **Shift** while scrolling for 6 dB steps, matching Page Up / Page Down), or double-click to center that band at 0 dB. Hover, focus, positive gain, and negative gain have distinct visual feedback. The same HWND exposes its band/frequency name and a unit-bearing editable dB value through standard Windows accessibility APIs. NVDA and Narrator should therefore announce the same dB number rather than converting the fader range to a percentage.
+Each band is drawn visually as a vertical graphic-EQ fader, with its frequency above it, a clear 0 dB center mark, and the exact final dB value below the fader. Sighted users can click or drag a fader, use the mouse wheel for 1 dB steps (hold **Shift** while scrolling for 6 dB steps, matching Page Up / Page Down), or double-click to center that band at 0 dB. Hover, focus, positive gain, and negative gain have distinct visual feedback. The same control exposes its band/frequency name and an editable dB value to accessibility tools, so NVDA and Narrator can announce the same number shown on screen rather than turning the fader into a percentage.
 
-Band values use one public format everywhere: the painted readout, exact-value editor, MSAA value, UI Automation value, and spoken result retain up to three meaningful decimal places. Unnecessary trailing zeroes beyond the first decimal are omitted. For example, `-6.2 dB` stays `-6.2 dB`, while `-6.234 dB` remains available as `-6.234 dB`. A 1 dB adjustment preserves the fractional base, so `-6.234 dB` becomes `-5.234 dB`.
+Band values use one public format everywhere: the painted readout, exact-value editor, accessibility value, and curve readout retain up to three meaningful decimal places. Unnecessary trailing zeroes beyond the first decimal are omitted. For example, `-6.2 dB` stays `-6.2 dB`, while `-6.234 dB` remains available as `-6.234 dB`. A 1 dB adjustment preserves the fractional base, so `-6.234 dB` becomes `-5.234 dB`.
 
 The band pages also work before you capture anything. In that state they are a
 standalone 30-band graphic EQ on the normal 20 Hz–20 kHz grid; manual changes
@@ -392,7 +393,7 @@ a match exists, those controls become trims around the learned correction.
 
 The displayed value is the **final tonal correction** at that band after Maximum Correction, Q / Sharpness, Correction Strength, and any manual trim. **Correction Gain** remains a separate global level trim and is not folded into every band value.
 
-Band pages use a preferred maximum of 10 bands each and are balanced when necessary to prevent a nearly empty last tab. The default 30-band resolution is therefore three pages: **Bands 1-10**, **Bands 11-20**, and **Bands 21-30**. A 60-band trace uses six predictable 10-band pages, while totals such as 31 are redistributed rather than leaving a one-band final page. Changing Correction Resolution through either the native Bands-page control or the host parameter view rebuilds the pages and their visible and accessible tab labels immediately.
+Band pages use a preferred maximum of 10 bands each and are balanced when necessary to prevent a nearly empty last tab. The default 30-band resolution is therefore three pages: **Bands 1-10**, **Bands 11-20**, and **Bands 21-30**. A 60-band trace uses six predictable 10-band pages, while totals such as 31 are redistributed rather than leaving a one-band final page. Changing Correction Resolution through either the Bands-page control or the host parameter view rebuilds the pages and their visible and accessible tab labels immediately.
 
 Each band keeps the same frequency name visually and through screen readers. If two nearby centers would round to the same short kHz label, Tone Trace shows the extra precision needed to distinguish them rather than presenting two identically named controls.
 
@@ -410,7 +411,7 @@ During offline rendering, Tone Trace suppresses its generated tones so they are 
 
 ## 9. Import and export
 
-Import and Export are available from the native Windows editor.
+Import and Export are available from the Windows editor.
 
 ### File types
 
@@ -455,28 +456,19 @@ Tone Trace stores curves and models using absolute frequency values. Material fr
 
 ## 10. Impulse-response export
 
-The Windows editor exports an IR at the current project sample rate. Source builds also include a command-line exporter that can render direct IRs at:
-
-- 44.1 kHz
-- 48 kHz
-- 88.2 kHz
-- 96 kHz
-- 176.4 kHz
-- 192 kHz
-
-These are rendered directly from the sample-rate-independent model rather than resampling a single master IR.
+The editor exports an IR at the current project sample rate. The IR is rendered directly from the learned correction rather than being a recording of Tone Trace's output.
 
 A Tone Trace IR can be loaded into a convolution host such as ReaVerb. The IR represents the linear correction only, so downstream headroom management remains your responsibility. For ReaVerb setup that reproduces the Tone Trace correction by itself, see the troubleshooting section.
 
 ## 11. Project save and restore
 
-Tone Trace never stores the raw captured audio in the host project state.
+Once you have a correction, the project saves the correction itself, not just the knob positions. Tone Trace stores the Reference and Target spectra, the learned correction model, manual band edits, correction settings, and the diagnostics needed to put the correction back together. You do **not** need the original `.tts`, `.ttm`, or exported IR files for a saved project to get its correction back.
 
-It stores compact Reference and Target spectra, settings, diagnostics, manual trim information, and the validated model needed to reproduce the correction.
+The raw captured audio is the one thing Tone Trace does not store in the project. It keeps the compact information learned from that audio instead.
 
-A usable saved profile restores as **Frozen**. An unusable intermediate state restores as **Ready** rather than silently resuming a capture.
+A valid saved correction reopens as **Frozen** so loading a project does not unexpectedly start learning from whatever happens to be playing. An incomplete or unusable intermediate capture returns to a safe Ready state rather than pretending the capture can continue where it left off.
 
-Host undo/autosave state requests do not intentionally interrupt a live capture.
+Host undo and autosave state requests do not intentionally interrupt a live capture.
 
 ## 12. Troubleshooting
 
@@ -557,54 +549,7 @@ That is intentional while capture is actively running. Finish the Reference/Targ
 
 That is intentional when a valid profile existed. Tone Trace does not resume learning automatically when a project loads.
 
-## 13. Command-line tools
-
-Source builds include tools for offline work and verification. These tools are **not** included in the public Windows release ZIP.
-
-```text
-tonetrace-match match <reference.wav> <target.wav> <model.ttm> [mode] [maximum-correction-db]
-tonetrace-match export-ir <model.ttm> <output-directory>
-tonetrace-match apply-ir <input.wav> <ir.wav> <output.wav>
-tonetrace-match inspect <model.ttm>
-```
-
-Remember the same naming rule applies here: `reference.wav` is the sound you want to match; `target.wav` is the sound being corrected.
-
-Source builds also create diagnostic tools for fixture evaluation, pair evaluation, stability trials, and real-time benchmarking. They are development and regression tools and are not included in the public release ZIP.
-
-## 14. Building from source
-
-### Windows
-
-Requirements:
-
-- CMake 3.25 or newer
-- Visual Studio 2022 Build Tools
-- Desktop development with C++
-- a Windows SDK
-
-Run:
-
-```bat
-build_all_windows.bat
-```
-
-The builder creates a clean Release build, runs the registered tests, stages only the CLAP plug-in and documentation, writes per-file SHA-256 hashes into the package manifest, creates one ZIP, and verifies it. It does not install the plug-in on the computer.
-
-### Other platforms
-
-The source contains macOS universal and Linux CMake verification presets, but Tone Trace 1.0.5 does not ship a supported macOS/Linux binary asset or release builder. The custom accessible editor is Windows-only; non-Windows source builds use the CLAP host's parameter interface.
-
-### Development documents
-
-This manual is intentionally about using Tone Trace. Source architecture, DSP design, wrapper details, and implementation notes belong in:
-
-- `README.md`
-- `DESIGN.md`
-- `GUI_DESIGN.md`
-- `plugins/README.md`
-
-## 15. Parameter reference
+## 13. Parameter reference
 
 | Parameter | Range | Default | Access |
 | --- | --- | --- | --- |
@@ -643,4 +588,12 @@ This manual is intentionally about using Tone Trace. Source architecture, DSP de
 
 ---
 
-Tone Trace EQ 1.0.5 is the current Windows CLAP release. The matching engine, state handling, CLAP workflow, full-capture fallback, balanced band-page layout, Voice ringing safeguard, and release UI behavior are covered by automated tests. As with any audio plug-in release, the exact packaged Windows binary should still receive a final host and accessibility check before publication.
+## Support and acknowledgements
+
+Tone Trace is free. If it helps your music, restoration, production, broadcast, or other audio work, donations are welcome and appreciated, but they are never required. I would rather people actually use Tone Trace than put it behind a checkout page.
+
+If you like it and want to support continued development: [Donate via PayPal](http://paypal.me/dgl1984)
+
+Tone Trace was inspired by **Spectrum Matcher**, which planted the seed for comparing the tonal balance of one recording against another. As Tone Trace developed, its capture workflow, editing, accessibility, live-use goals, and import/export tools took it in directions of its own. Spectrum Matcher deserves credit for helping start the idea.
+
+Development also benefited from studying **Surge XT** and other mature open-source audio projects. Surge helped show where JUCE already did the right thing, where accessibility or host integration needed extra care, and where a simpler approach was better than adding more machinery.

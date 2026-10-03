@@ -92,15 +92,22 @@ tonetrace::ProfileSnapshot testSnapshot() {
   snapshot.matchSettings.mode = tonetrace::MatchMode::FullMix;
   snapshot.matchSettings.rangeLowHz = 20.0;
   snapshot.matchSettings.rangeHighHz = 20000.0;
-  snapshot.matchSettings.maximumCorrectionDb = 60.0;
+  snapshot.matchSettings.maximumCorrectionDb = 23.125;
   snapshot.matchSettings.resolution = 60;
+  snapshot.matchSettings.removeBroadLevelDifference = false;
   snapshot.renderSettings.sampleRate = 48000;
-  snapshot.renderSettings.durationSeconds = 0.02;
-  snapshot.renderSettings.rangeLowHz = 20.0;
-  snapshot.renderSettings.rangeHighHz = 20000.0;
+  snapshot.renderSettings.durationSeconds = 0.031;
+  snapshot.renderSettings.correctionStrength = 0.731;
+  snapshot.renderSettings.correctionSharpness = 1.237;
+  snapshot.renderSettings.correctionGainDb = 2.375;
+  snapshot.renderSettings.rangeLowHz = 73.0;
+  snapshot.renderSettings.rangeHighHz = 17321.0;
   snapshot.referenceDiagnostics.sampleCount = 100000;
+  snapshot.referenceDiagnostics.clippedSamples = 321;
   snapshot.referenceDiagnostics.peakAbsolute = 0.8;
-  snapshot.targetDiagnostics = snapshot.referenceDiagnostics;
+  snapshot.targetDiagnostics.sampleCount = 90000;
+  snapshot.targetDiagnostics.clippedSamples = 123;
+  snapshot.targetDiagnostics.peakAbsolute = 0.7;
   return snapshot;
 }
 
@@ -224,13 +231,51 @@ void testProjectState() {
   const auto frozen = tonetrace::deserializeProjectState(frozenBytes);
   require(frozen.phase == tonetrace::WorkflowPhase::Frozen && frozen.snapshot,
           "Validated project state did not restore Frozen");
-  require(frozen.snapshot->reference.points.size() == snapshot.reference.points.size() &&
-              frozen.snapshot->target.points.size() == snapshot.target.points.size() &&
-              frozen.snapshot->uncappedModel.nodes.size() ==
-                  snapshot.uncappedModel.nodes.size() &&
-              frozen.snapshot->uncappedModel.gainDbAt(5000.0) == 4.0 &&
-              frozen.snapshot->matchSettings.maximumCorrectionDb == 60.0,
-          "Frozen state changed a capture, model, or setting");
+  require(tonetrace::serializeSpectrumCapture(frozen.snapshot->reference) ==
+              tonetrace::serializeSpectrumCapture(snapshot.reference) &&
+              tonetrace::serializeSpectrumCapture(frozen.snapshot->target) ==
+              tonetrace::serializeSpectrumCapture(snapshot.target) &&
+              tonetrace::serializeCorrectionModel(frozen.snapshot->uncappedModel) ==
+              tonetrace::serializeCorrectionModel(snapshot.uncappedModel),
+          "Frozen project state changed a Reference, Target, or learned model");
+  require(frozen.snapshot->matchSettings.mode == snapshot.matchSettings.mode &&
+              frozen.snapshot->matchSettings.rangeLowHz == snapshot.matchSettings.rangeLowHz &&
+              frozen.snapshot->matchSettings.rangeHighHz == snapshot.matchSettings.rangeHighHz &&
+              frozen.snapshot->matchSettings.maximumCorrectionDb ==
+                  snapshot.matchSettings.maximumCorrectionDb &&
+              frozen.snapshot->matchSettings.resolution == snapshot.matchSettings.resolution &&
+              frozen.snapshot->matchSettings.removeBroadLevelDifference ==
+                  snapshot.matchSettings.removeBroadLevelDifference,
+          "Frozen project state changed match settings");
+  require(frozen.snapshot->renderSettings.sampleRate == snapshot.renderSettings.sampleRate &&
+              frozen.snapshot->renderSettings.durationSeconds ==
+                  snapshot.renderSettings.durationSeconds &&
+              frozen.snapshot->renderSettings.correctionStrength ==
+                  snapshot.renderSettings.correctionStrength &&
+              frozen.snapshot->renderSettings.correctionSharpness ==
+                  snapshot.renderSettings.correctionSharpness &&
+              frozen.snapshot->renderSettings.correctionGainDb ==
+                  snapshot.renderSettings.correctionGainDb &&
+              frozen.snapshot->renderSettings.rangeLowHz == snapshot.renderSettings.rangeLowHz &&
+              frozen.snapshot->renderSettings.rangeHighHz == snapshot.renderSettings.rangeHighHz,
+          "Frozen project state changed render settings");
+  require(frozen.snapshot->referenceDiagnostics.sampleCount ==
+                  snapshot.referenceDiagnostics.sampleCount &&
+              frozen.snapshot->referenceDiagnostics.nonFiniteSamples ==
+                  snapshot.referenceDiagnostics.nonFiniteSamples &&
+              frozen.snapshot->referenceDiagnostics.clippedSamples ==
+                  snapshot.referenceDiagnostics.clippedSamples &&
+              frozen.snapshot->referenceDiagnostics.peakAbsolute ==
+                  snapshot.referenceDiagnostics.peakAbsolute &&
+              frozen.snapshot->targetDiagnostics.sampleCount ==
+                  snapshot.targetDiagnostics.sampleCount &&
+              frozen.snapshot->targetDiagnostics.nonFiniteSamples ==
+                  snapshot.targetDiagnostics.nonFiniteSamples &&
+              frozen.snapshot->targetDiagnostics.clippedSamples ==
+                  snapshot.targetDiagnostics.clippedSamples &&
+              frozen.snapshot->targetDiagnostics.peakAbsolute ==
+                  snapshot.targetDiagnostics.peakAbsolute,
+          "Frozen project state changed capture diagnostics");
   require(tonetrace::serializeProjectState(frozen.snapshot.get()) == frozenBytes,
           "Project-state serialization is not deterministic");
 

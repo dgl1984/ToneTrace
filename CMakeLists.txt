@@ -134,13 +134,8 @@ endif()
 install(FILES
     README.md
     MANUAL.md
-    DESIGN.md
-    GUI_DESIGN.md
     CHANGELOG.md
     RELEASE_NOTES.md
-    RELEASING.md
-    CONTRIBUTING.md
-    SECURITY.md
   DESTINATION docs
   COMPONENT Release)
 
@@ -148,6 +143,9 @@ install(FILES
     LICENSE
   DESTINATION .
   COMPONENT Release)
+
+# Keep the user documentation self-contained inside the portable package.
+install(FILES LICENSE DESTINATION docs COMPONENT Release)
 
 install(FILES
     third_party/clap/LICENSE

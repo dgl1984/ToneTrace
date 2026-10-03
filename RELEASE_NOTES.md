@@ -1,15 +1,21 @@
-# Tone Trace EQ 1.0.5 release notes
+# Tone Trace EQ 1.1.0 — release notes
 
-Fixed a serious bug where REAPER could forget the match model if Tone Trace was moved to a different track or project.
+This is a port of Tone Trace's existing feature set to JUCE for Windows VST3
+and CLAP. The 1.0.5 matching engine and workflow are preserved; no new matching
+features are introduced.
 
-## Download
+The port restores the released keyboard controls, curve descriptions/readouts,
+and accessible band values, and corrects port regressions in navigation tones,
+imported-reference capture, project-state handling, Options-dialog focus, and
+initial Import/Export menu selection for screen readers. Documentation now covers
+both formats and the shared editor.
 
-Download `ToneTrace_EQ_1.0.5_Windows_x64.zip` from this release. It contains the Windows x64 CLAP plug-in, documentation, licenses, and a per-file SHA-256 build manifest.
+Download `ToneTrace_EQ_1.1.0_Windows_x64.zip` for both plug-ins, documentation,
+dependency notices, and the per-file SHA-256 build manifest. Copy the CLAP file
+to `C:\Program Files\Common Files\CLAP\`, and the complete VST3 bundle to
+`C:\Program Files\Common Files\VST3\`, then rescan in your host.
 
-## Install on Windows
+Back up projects before upgrading. The CLAP port reads legacy Tone Trace states,
+but states saved by 1.1.0 cannot be reopened by 1.0.5. VST3 is a separate plug-in
+format and does not automatically replace CLAP instances.
 
-1. Close REAPER and extract the ZIP.
-2. Copy `plugins/clap/Tone Trace EQ.clap` to `C:\Program Files\Common Files\CLAP\`, replacing the previous version.
-3. Open REAPER and rescan CLAP plug-ins if needed.
-
-Administrator permission is normally required for the system-wide CLAP folder. Removing the copied `.clap` file uninstalls Tone Trace.

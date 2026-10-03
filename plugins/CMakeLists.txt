@@ -1,5 +1,10 @@
-# Tone Trace 1.0 ships CLAP as its supported plug-in format.
-# Additional wrappers can be added later without changing the root builder.
+# The Windows release uses the shared JUCE VST3/CLAP port. The original
+# wrapper remains available for legacy/non-Windows regression work.
+option(TONETRACE_USE_JUCE "Build the shared JUCE VST3 and CLAP port" ${WIN32})
+if(TONETRACE_USE_JUCE)
+  add_subdirectory(juce)
+  return()
+endif()
 
 set(TONETRACE_WRAPPER_DIRECTORIES clap)
 if(APPLE)

@@ -11,7 +11,7 @@ Include:
 - host name and version;
 - exact Tone Trace version;
 - the workflow step and minimal reproduction;
-- whether the native editor or host parameter view was used;
+- whether the custom editor or host parameter view was used;
 - for accessibility issues, the screen reader and bridge (for example NVDA and
   OSARA) plus the spoken result you expected and received.
 
@@ -19,6 +19,8 @@ Do not attach private audio unless you have permission to share it. A synthetic
 or short redacted fixture is preferable.
 
 ## Build and test
+
+Windows release verification requires Visual Studio 2022 C++ tools, CMake 3.25+, and Git/network access on the first build to fetch pinned JUCE and CLAP adapter dependencies. Existing checkouts can be selected with `JUCE_DIR` and `CLAP_JUCE_EXTENSIONS_DIR`.
 
 Windows release verification:
 
@@ -40,8 +42,8 @@ ctest --test-dir build --output-on-failure
   events and do not duplicate matching logic.
 - Do not allocate, lock, perform file I/O, or analyze on the audio thread.
 - Preserve parameter IDs and serialized-state compatibility.
-- Treat the CLAP parameter surface as authoritative.
-- Visual editor changes must preserve native control roles, accessible names,
+- Preserve the released 1.0.5 behavior and CLAP parameter contract in both formats.
+- Visual editor changes must preserve accessible control roles, accessible names,
   tab order, keyboard behavior, and concise announcements.
 - Add or update tests and documentation for user-visible behavior.
 - Run all registered tests before requesting review.

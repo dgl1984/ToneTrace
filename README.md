@@ -10,23 +10,26 @@ That distinction matters in practice. You can audition the match, change how Ton
 
 The result is useful anywhere two recordings ought to live in the same tonal world: matching microphones, bringing voice recordings from different chains closer together, restoring old material toward a cleaned-up reference, evening out production changes between sessions, or simply getting to a difficult EQ starting point faster than drawing the curve by hand.
 
-Tone Trace EQ is a free match EQ from **Lanes Audio** and ships as a CLAP plug-in.
+Tone Trace EQ is a free match EQ from **Lanes Audio** and ships as VST3 and CLAP plug-ins on Windows.
 
 ## Download and install
 
-The 1.0.5 binary release is **Windows 10/11 x64**. Download the one
-release asset named `ToneTrace_EQ_1.0.5_Windows_x64.zip`, extract it, and copy
+The 1.1.0 release is **Windows 10/11 x64**. The single package is
+`ToneTrace_EQ_1.1.0_Windows_x64.zip`. Extract it and copy
 `plugins\clap\Tone Trace EQ.clap` to:
 
 `C:\Program Files\Common Files\CLAP\`
 
-Then rescan CLAP plug-ins in the host. The ZIP also contains the complete
-documentation, licenses, and `docs\BUILD_MANIFEST.txt` with a SHA-256 hash for
-every packaged file. It contains no installer, developer tools, tests, or debug
-symbols, and it changes nothing until you copy the `.clap` file.
+For VST3, copy the entire `plugins\vst3\Tone Trace EQ.vst3` folder to
+`C:\Program Files\Common Files\VST3\`. Use either format in a project, then rescan
+plug-ins in the host. The ZIP also contains the user documentation, release notes, licenses, and `docs\BUILD_MANIFEST.txt` with a SHA-256 hash for every packaged file. It contains no installer, developer tools, tests, or debug
+symbols, and it changes nothing until you copy a plug-in.
 
-Source builds are possible on other C++20 platforms, but 1.0.5 does not claim a
-supported non-Windows binary release or native non-Windows custom editor.
+This package is the JUCE port of the 1.0.5 feature set, using its unchanged matching
+and realtime engine. The CLAP ID and numeric parameter IDs are retained, and the
+port reads 1.0.5 CLAP states. Keep a backup
+before updating projects: states saved by 1.1 are not readable by 1.0.5. VST3
+is a separate host plug-in identity, so existing CLAP instances stay CLAP.
 
 ## The one rule to remember
 
@@ -79,16 +82,19 @@ A learned correction can be exported as a minimum-phase impulse response at comm
 
 ## Accessibility
 
-The Windows editor was designed to be usable both visually and nonvisually. The Match page is mouse-operable, the graphic-EQ bands have conventional visual faders, and the same controls remain keyboard accessible without adding extra focus stops or verbose screen-reader chatter.
+The shared JUCE editor provides Capture and transfer, Correction controls, and
+Bands pages. Its graph has an exact Curve Readout, a readable Curve Description,
+and Copy Curve Description. Trace Curve is available by its toggle or T/F2.
+Band Left/Right moves focus; Up/Down changes gain. Enter opens exact value entry.
 
 Band values report the same dB value everywhere: in the visible control,
-exact-value field, NVDA, and Narrator. Values retain up to three meaningful
-decimal places, and Narrator does not substitute percentages.
+exact-value field, and accessibility interface. Values retain up to three meaningful
+decimal places and use a dB string instead of a percentage range. Host and screen-reader combinations can still expose integration differences, so accessibility feedback is welcome.
 
 With NVDA, band navigation is intentionally concise. The read-only curve text
 is explicitly labeled **Curve Description**. Reference and Target measurements
 use higher/lower wording, while boost/cut is reserved for the Correction Tone
-Trace actually applies. The Match page has a labeled
+Trace actually applies. The Capture page has a labeled
 multiline **Status** field plus an **Options...** button for less-frequently
 changed controls. Global controls and the single persistent **Workflow Step**
 remain available through the host's generic parameter interface, including
@@ -99,13 +105,9 @@ Accessibility feedback is especially welcome at `info@lanesaudio.com`.
 
 ## Formats
 
-Tone Trace 1.0 ships as **CLAP**.
-
-The Windows CLAP build includes the native accessible editor. The custom editor
-is Windows-only; non-Windows source builds use the host's CLAP parameter view.
-
-Version 1.0.5 has one release asset:
-`ToneTrace_EQ_1.0.5_Windows_x64.zip`. Per-file SHA-256 hashes are stored inside
+The Windows 1.1 port builds **VST3 and CLAP** from one JUCE processor and editor.
+Version 1.1.0 has one project-built release asset:
+`ToneTrace_EQ_1.1.0_Windows_x64.zip`. Per-file SHA-256 hashes are stored inside
 that ZIP in `docs/BUILD_MANIFEST.txt`.
 
 ## Tone Trace is an EQ matcher, not a limiter
@@ -118,36 +120,42 @@ Exported IRs remain linear and do not include the Emergency Clip Guard. If the f
 
 - **[MANUAL.md](MANUAL.md)** — using Tone Trace, start to finish.
 - **[DESIGN.md](DESIGN.md)** — matching engine, model, state, and DSP design.
-- **[GUI_DESIGN.md](GUI_DESIGN.md)** — native editor and accessibility design.
+- **[GUI_DESIGN.md](GUI_DESIGN.md)** — shared editor and accessibility design.
 - **[plugins/README.md](plugins/README.md)** — wrapper implementation and host-boundary details.
 - **[CHANGELOG.md](CHANGELOG.md)** — versioned user-visible changes.
-- **[RELEASE_NOTES.md](RELEASE_NOTES.md)** — 1.0.5 summary, asset contents, and installation.
+- **[RELEASE_NOTES.md](RELEASE_NOTES.md)** — release summary, asset contents, and installation.
 - **[RELEASING.md](RELEASING.md)** — deterministic build, verification, tag, and upload procedure.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — build, testing, and accessibility invariants for changes.
 - **[SECURITY.md](SECURITY.md)** — private vulnerability-reporting policy.
 
 ## Building and testing
 
-Tone Trace vendors the CLAP 1.2.10 headers under `third_party`, with the upstream license notice, so a normal release build does not download SDK code.
+Windows builds require JUCE 8.0.12 and clap-juce-extensions commit
+`55525c9858d4b25687be7759a5e0f70eccef218e`. CMake fetches these on the first build;
+Git and network access are required. For an offline build, supply `JUCE_DIR`
+and `CLAP_JUCE_EXTENSIONS_DIR` pointing to complete local checkouts (including
+the adapter's CLAP and clap-helpers submodules). Dependency versions and local
+compatibility adjustments are described in [plugins/README.md](plugins/README.md).
 
 ### Windows
 
-Requirements are CMake 3.25 or newer, Visual Studio 2022 Build Tools with **Desktop development with C++**, and a Windows SDK. Run:
+Requirements are CMake 3.25 or newer, Git, Visual Studio 2022 Build Tools with **Desktop development with C++**, and a Windows SDK. Run:
 
 ```bat
 build_all_windows.bat
 ```
 
 The builder starts clean, compiles the plug-in plus its verification targets,
-runs every registered CTest, stages only the plug-in and documentation, writes
+runs every registered CTest, stages both plug-ins and documentation, writes
 an internal SHA-256 build manifest, creates the ZIP, and verifies the archive.
 It does not install or replace plug-ins on the machine.
 
 ### Other platforms
 
 `CMakePresets.json` contains macOS universal and Linux verification presets for
-developers. There is no 1.0.5 macOS/Linux release builder or supported binary
-asset, and the custom native editor remains Windows-only.
+developers. They retain the legacy CLAP wrapper by default. The JUCE port and
+this release package are validated on Windows x64 only; no macOS/Linux binary
+release is claimed.
 
 ### Developer path
 
@@ -158,15 +166,24 @@ make
 make test
 ```
 
-The Makefile and CMake paths build the same CLAP wrapper and shared engine used by the release builders.
+The Makefile builds the legacy CLAP wrapper. Use the Windows CMake build for the
+JUCE VST3/CLAP release; both paths retain the released matching engine.
 
-## 1.0 status
+## Release status
 
-Version **1.0.0** is the first stable public source release. Automated coverage includes the matching engine, WAV/model round trips, real-time renderer, project-state validation, CLAP workflow, balanced band-page layout, accessibility-facing parameter behavior, and malformed-state rejection.
+Version **1.1.0** is the current Windows release and the first release in which VST3 and CLAP share the JUCE processor and editor. Automated coverage includes the matching engine, WAV/model round trips, real-time renderer, project-state validation, workflow, balanced band-page layout, keyboard/accessibility-facing behavior, visual snapshots, and malformed-state rejection.
 
-The release also preserves a last-known-good correction when a replacement capture or saved state fails validation. Raw captured audio is never stored in the project.
+The release preserves a last-known-good correction when a replacement capture or saved state fails validation. Raw captured audio is never stored in the project.
 
 Host and OS combinations can still expose integration bugs, so useful reports should include the plug-in format, host/version, operating system, and the exact workflow step involved.
+
+## Useful pieces for other plug-in developers
+
+Tone Trace's source contains more than the plug-in itself. A fair amount of reusable infrastructure grew around accessibility, regression testing, visual validation, and repeatable builds. If any of it makes another audio plug-in easier to test or more accessible, please study it and adapt the ideas to your own project. Some of the most useful parts of Tone Trace may be things users never see.
+
+In particular, the JUCE tree includes keyboard- and screen-reader-oriented controls, focus and paging tests, project-state round-trip tests, source-contract checks, and a visual snapshot harness that renders the real editor offscreen at representative sizes. The accessibility code is included as working examples rather than a framework, and the visual harness is deliberately based on JUCE rather than Win32 so it can remain useful to future non-Windows work.
+
+We benefited from being able to inspect mature open-source audio projects while building Tone Trace. Keeping these pieces readable is one way of returning that favor.
 
 ## License
 
@@ -176,7 +193,18 @@ You are explicitly welcome to use Tone Trace for personal or commercial **audio 
 
 The source may be inspected, studied, modified, and redistributed subject to the license. However, the license does **not** permit selling Tone Trace itself, a rebranded or lightly modified version of it, or another product or service whose value derives entirely or substantially from Tone Trace's software functionality. Contact `info@lanesaudio.com` to discuss a separate commercial software license.
 
-Vendored CLAP files retain their upstream license under `third_party`.
+JUCE, the CLAP adapter, and bundled third-party code retain their own licenses.
+The package includes dependency notices under `licenses/`. The project license
+does not replace the separate JUCE licensing terms. The intended licensing basis
+for the official port is JUCE Starter, subject to its eligibility rules. See
+[JUCE 8 terms](https://juce.com/legal/juce-8-licence/); anyone rebuilding or
+distributing a derivative must meet the applicable JUCE terms themselves.
+
+## Acknowledgements
+
+Tone Trace was inspired by **Spectrum Matcher**, which planted the seed for comparing the tonal balance of one recording against another. Tone Trace grew in its own direction as its capture workflow, editing, accessibility, live-use goals, and import/export tools developed, but Spectrum Matcher deserves credit for helping start the idea.
+
+Development also benefited from studying **Surge XT** and other mature open-source audio projects. Surge was especially useful as a practical reference for where JUCE already provides solid behavior, where accessibility or host integration needs explicit attention, and where our own early solutions were becoming more complicated than they needed to be. That kind of open source visibility helped Tone Trace, and it is one reason the project's own accessibility and regression-testing infrastructure is kept readable for other developers to study and adapt.
 
 ## Contact and support
 
@@ -184,4 +212,4 @@ Questions, bug reports, accessibility feedback, and commercial software licensin
 
 Tone Trace is free to use for audio work. If it saves you time and you would like to support continued development, donations are welcome but never required:
 
-[Donate via PayPal](https://paypal.me/dgl1984)
+[Donate via PayPal](http://paypal.me/dgl1984)

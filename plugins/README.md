@@ -1,32 +1,43 @@
-# Tone Trace plug-in wrapper
+# Tone Trace plug-in wrappers
 
-Tone Trace EQ 1.0 ships one supported plug-in format: **CLAP**. It uses the shared `HeadlessPluginCore` for matching, validated state, and real-time correction rather than duplicating DSP inside the wrapper.
+Windows 1.1.0 uses `plugins/juce` for both VST3 and CLAP. Both share the same
+processor, editor, and unmodified 1.0.5 matching/realtime engine. The legacy
+`plugins/clap` wrapper remains the behavior reference and the default for
+non-Windows verification builds; `TONETRACE_USE_JUCE=OFF` selects it explicitly.
 
-## CLAP implementation
+The port retains all 19 released global parameters, CLAP numeric IDs, and CLAP
+identity `com.lanesaudio.tonetrace-eq`. JUCE supplies VST3 integration and the
+accessible editor. The pinned CLAP adapter is patched at configure time into
+the build directory for parameter IDs, flags, text precision, state loading,
+host rescan notification, stream validation, and stopped-transport tone reset.
+Upstream dependency checkouts are left untouched.
 
-The plug-in uses the official CLAP 1.2.10 interface and supports stereo audio, the complete 19-parameter control surface, project save and restore, zero reported latency during normal corrected playback, gated Reference/Target capture, confidence and status reporting, Preview, Freeze, Reset, import/export, matched or manual-only impulse-response export, optional tone notifications, standard 30-second accepted-audio capture, and 60-second Custom Max Capture.
+## State and processing
 
-On Windows it also ships the native Win32 editor designed for keyboard and screen-reader use. Each band uses one dedicated custom-fader HWND for keyboard, pointer, MSAA, and UI Automation access. Its public value is a unit-bearing dB string with up to three meaningful decimal places; UI Automation deliberately uses the string Value pattern so Narrator does not normalize the correction to a percentage. Band pages use the full editor area, prefer at most 10 bands per page, and rebalance odd totals instead of leaving a tiny final tab. Correction Resolution is available in a labeled Bands-page combo as well as through the host parameter view. Live changes rebuild complete **Bands N-M** tab names, and nearby center-frequency labels remain distinct. The default 30-band layout is 10 + 10 + 10; 60 bands is six predictable 10-band pages.
+Project state contains validated correction data and manual bands, not raw live
+capture. Loading restores Frozen or Ready, never resumes learning. The CLAP
+loader accepts released state versions 1–3 and converts them to the JUCE state;
+save with 1.1.0 is one-way, so retain project backups for rollback to 1.0.5.
+VST3 uses its own host identity and cannot replace CLAP instances automatically.
 
-A mock CLAP host tests discovery, lifecycle, host-event and `params.flush` delivery, audio, accessibility text, fresh-instance defaults, partial streams, restoration, full-capture fallback, and malformed state. Windows regressions also protect the labeled native controls, complete tab names, distinct band-frequency names, band controls, focus across page rebuilds, and the balanced paging rule.
+Same-rate stop/restart retains raw capture. Sample-rate changes clear raw capture
+and rerender retained profiles. Host reset clears audio history without deleting
+the correction. Background workers perform analysis and filter preparation;
+the audio path uses the released realtime renderer with a separate smoothed
+Correction Gain, bypass crossfade, and clip guard. Reported latency remains zero.
 
-CLAP headers are vendored under `third_party/clap` with the upstream license notice. Nothing is downloaded during a normal build.
+## Verification
 
-## State and real-time rules
+CTest covers the original engine/realtime suites plus capture, controller,
+catalog, keyboard, state, output bypass, notification tones, and layout tests.
+The snapshot utility renders the real JUCE editor at representative sizes.
+Run pluginval against VST3 and clap-validator against CLAP after building.
 
-- The audio callback allocates and locks nothing in the shared renderer.
-- Analysis and correction-filter preparation run off the audio thread.
-- Ready, Preview, and Frozen report zero samples of latency.
-- Host state snapshots serialize a validated last-known-good profile as Frozen, or Ready when none exists. Loading never resumes learning.
-- Active state loads retain the complete validated incoming state and request a host restart. Saves return that incoming state until activation applies it; deactivation cannot overwrite it with the outgoing model. Repeated loads retain the latest valid state, and malformed loads leave it intact.
-- Raw captured audio is never stored in the project. A same-sample-rate deactivate/reactivate preserves an in-progress raw Reference or Target in wrapper memory so transport Stop cannot behave like Reset; a real sample-rate change clears raw capture.
-- Invalid, clipped, incomplete, or damaged capture and project data cannot replace the last-known-good correction.
-- The host exposes one persistent Workflow Step containing Capture Reference through Cancel Reset. Small directional fractional host moves are snapped to the adjacent enum step for REAPER/OSARA compatibility. Reset remains protected by Arm/Confirm/Cancel within that control; the native Options dialog uses a standard confirmation before requesting the same destructive reset.
-- Capture uses the full analysis range; Range Low/High affect rendered correction only. Standard modes stop accepting audio at about 30 seconds; Custom Max Capture stops at about 60 seconds.
-- The Emergency Clip Guard is a last-resort plug-in ceiling. Exported IRs remain linear and do not contain it.
+For release validation, check both packaged formats in REAPER: discovery, playback,
+Reference -> Target -> Correct -> Preview -> Freeze, imported Reference with live
+Target, manual bands, save/reload, duplicate/moved instances, stop/restart,
+bypass, offline export, and import/export. Check Tab order, exact entry, band
+arrows, Trace Curve, page switching, and spoken dB values with NVDA/OSARA and
+Narrator. These human host/screen-reader checks are not replaced by validators.
 
-## Host-specific release checks
-
-Automated tests cannot establish every real host/OS behavior. Before publishing Windows binaries, verify REAPER discovery, project save/reload, duplicate instances, NVDA/OSARA navigation, native-editor controls, and the full Reference -> Target -> Correct -> Preview -> Freeze workflow with representative audio.
-
-Builds stage portable artifacts only. Copying the CLAP file into a system or per-user plug-in directory remains a separate, explicit action.
+The build stages portable artifacts only; it does not install them into a DAW.

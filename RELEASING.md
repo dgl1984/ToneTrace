@@ -1,6 +1,6 @@
 # Releasing Tone Trace EQ
 
-This is the authoritative 1.x release procedure. The version comes from the
+This is the Windows 1.x release procedure. Agree the changelog and release notes before publishing the release. The version comes from the
 single-line `VERSION` file.
 
 ## 1. Prepare the source
@@ -12,6 +12,8 @@ single-line `VERSION` file.
 4. Confirm `git status --short` contains only the intended release changes.
 
 ## 2. Build the Windows asset
+
+The first configure fetches pinned JUCE 8.0.12 and clap-juce-extensions sources, so Git and network access are required unless local paths are provided as described in README.md.
 
 From a normal Command Prompt or by double-clicking the file, run:
 
@@ -38,10 +40,9 @@ The build is releasable only when all of these are true:
 - the build log contains no compiler warning or error;
 - the ZIP opens and contains only the package root plus `plugins/`, `docs/`,
   `licenses/`, and `LICENSE`;
-- exactly one `.clap` file exists and no `.exe`, `.dll`, `.lib`, `.pdb`, or
-  object file exists in the ZIP;
+- exactly one `.clap` file and one complete `.vst3` bundle exist, with no developer executables, `.dll`, `.lib`, `.pdb`, or object files;
 - `docs/BUILD_MANIFEST.txt` records every packaged file except itself;
-- the CLAP host test loads the exact Release binary that was packaged;
+- pluginval (strictness 5 or higher) and clap-validator load the exact packaged VST3 and CLAP binaries; investigate failures and record skips or warnings;
 - the manual real-host checklist in `plugins/README.md` has been completed with
   the packaged binary.
 

@@ -212,8 +212,8 @@ if not "!STEP_ERROR!"=="0" (
 )
 
 echo.
-echo Building Tone Trace CLAP and release verification targets...
-"!CMAKE_EXE!" --build "%BUILD_DIR%" --config Release --parallel >> "!BUILD_LOG!" 2>&1
+echo Building Tone Trace VST3 and CLAP and release verification targets...
+"!CMAKE_EXE!" --build "%BUILD_DIR%" --config Release -- /m:1 /nr:false >> "!BUILD_LOG!" 2>&1
 set "STEP_ERROR=!errorlevel!"
 if not "!STEP_ERROR!"=="0" (
   set "FAILED_STEP=Release compilation"
@@ -232,7 +232,7 @@ if not "!STEP_ERROR!"=="0" (
 )
 
 echo.
-echo Staging the CLAP plug-in and documentation only...
+echo Staging the VST3 and CLAP plug-ins and documentation only...
 "!CMAKE_EXE!" --install "%BUILD_DIR%" --config Release --component Release --prefix "%STAGE_DIR%" >> "!BUILD_LOG!" 2>&1
 set "STEP_ERROR=!errorlevel!"
 if not "!STEP_ERROR!"=="0" (

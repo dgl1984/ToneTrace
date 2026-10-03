@@ -108,7 +108,7 @@ Recapture follows the workflow hierarchy. Starting a new Reference clears the
 current Reference/Target capture chain. Returning to Learn Target after Preview
 or Freeze preserves the valid Reference and starts a fresh Target capture. The
 last-known-good correction remains available as a safety fallback until a new
-candidate validates successfully. Reset remains the explicit whole-instance
+correction validates successfully. Reset remains the explicit whole-instance
 wipe and still requires protected confirmation.
 
 Saved project state never contains live learning. A valid last-known-good
@@ -116,7 +116,7 @@ profile is stored as Frozen; otherwise it is Ready, and loading never resumes
 capture. Raw live capture remains wrapper-owned across a same-sample-rate
 deactivate/reactivate so a host that suspends the plug-in on transport Stop
 cannot silently erase a Reference or Target. A real sample-rate change resets
-raw capture because those samples cannot be reinterpreted safely. A generic CLAP state-save callback cannot distinguish an explicit user
+raw capture because those samples cannot be reinterpreted safely. A generic host state-save callback cannot distinguish an explicit user
 save from host undo/autosave bookkeeping, so taking a snapshot must not mutate
 or cancel the live instance. The explicit Freeze command ends live learning.
 Capture and analysis may take all needed time, while Frozen reports zero
