@@ -5,31 +5,30 @@ versioning, and release dates use `YYYY-MM-DD`.
 
 ## [1.1.0] - 2026-10-03
 
-### Added
+Tone Trace EQ 1.1.0 moves to JUCE, a cross-platform foundation that makes future
+support for additional operating systems more practical. This release brings
+Windows VST3 alongside CLAP, with both formats sharing the same editor and
+processing implementation.
 
-- Added a shared JUCE editor and processor for Windows VST3 and CLAP while preserving the released 1.0.5 matching and realtime engine.
-- Added VST3 alongside CLAP in one portable Windows package.
+The familiar matching engine and workflow are preserved. Achieving that
+continuity required substantial engineering: bringing keyboard navigation,
+screen-reader behavior, audio processing, saved projects, and host integration
+across to the new framework, then testing those pieces together. Much of that
+work is deliberately invisible in everyday use—the goal was for Tone Trace to
+keep feeling like Tone Trace.
+
+This release supports Windows x64. The new foundation prepares the project for
+future platform work.
+
+### Supporting infrastructure
+
 - Added reusable JUCE keyboard/accessibility controls, processor-state round-trip coverage, and an offscreen visual snapshot harness for layout regression testing.
-
-### Improved
-
-- Restored and tightened keyboard band navigation, exact-value entry, page navigation tones, screen-reader labels, Options-dialog focus, and initial Import/Export menu selection.
-- Import and export now share the same validated processor workflow in both plug-in formats.
-- Project state now round-trips the complete frozen correction, including Reference and Target spectra, learned model, manual bands, correction settings, and diagnostics, without depending on external Tone Trace files.
-- Release packaging now produces one Windows ZIP containing both plug-in formats, user documentation, licenses, and a per-file build manifest.
-
-### Fixed
-
-- Fixed imported Reference telemetry and active-range validation differences from the original CLAP behavior.
-- Fixed stale imported Target reuse when returning to live Target capture.
-- Fixed state-restore transfer-session leakage and model-import failure reporting.
-- Fixed CLAP stopped-transport handling so an ordinary processing stop does not reset the correction engine.
-- Fixed analysis-worker ownership and filter-preparation paths uncovered during the JUCE parity audit.
+- Both plug-in formats ship in one Windows ZIP with user documentation, licenses, and a per-file build manifest.
 
 ### Verification
 
 - A clean Windows 10 build from an empty folder completed successfully with VST3 and CLAP and passed all 14 registered tests.
-- Both formats were manually verified in REAPER with NVDA, including the final Options-dialog and Import/Export menu focus fixes.
+- Both formats were manually verified in REAPER with NVDA.
 
 ## [1.0.5] - 2026-09-08
 
