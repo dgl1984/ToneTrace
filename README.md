@@ -2,8 +2,6 @@
 
 **A match EQ you can keep working with.**
 
-If a program does more than say “Hello, world!” and/or looks well-designed visually, every line responsible for such elevated standards was coded by AI—but the design is mine.
-
 If you already know what an EQ does, Tone Trace starts from familiar ground. A normal EQ gives you bands and asks you to decide what needs more or less. A match EQ can take a different route: give it one sound you like and one sound you want to change, and it can learn the tonal difference for you.
 
 Tone Trace takes that idea further. It sits somewhere between a match EQ, a hands-on graphic EQ, and a reusable correction tool. None of those ideas is unusual by itself; the useful part is that they stay connected. You capture a **Reference**—the sound you want—and a **Target**—the sound you want to correct. Tone Trace listens to both, builds the match, and then gives that result back to you as something you can continue to work with rather than a one-shot calculation.
@@ -89,8 +87,7 @@ Bands pages. Its graph has an exact Curve Readout, a readable Curve Description,
 and Copy Curve Description. Trace Curve is available by its toggle or T/F2.
 Band Left/Right moves focus; Up/Down changes gain. Enter opens exact value entry.
 
-Band values report the same dB value everywhere: in the visible control,
-exact-value field, and accessibility interface. Values retain up to three meaningful
+Values retain up to three meaningful
 decimal places and use a dB string instead of a percentage range. Host and screen-reader combinations can still expose integration differences, so accessibility feedback is welcome.
 
 With NVDA, band navigation is intentionally concise. The read-only curve text
@@ -204,7 +201,8 @@ distributing a derivative must meet the applicable JUCE terms themselves.
 
 ## Acknowledgements
 
-Tone Trace was inspired by **Spectrum Matcher**, which planted the seed for comparing the tonal balance of one recording against another. Tone Trace grew in its own direction as its capture workflow, editing, accessibility, live-use goals, and import/export tools developed, but Spectrum Matcher deserves credit for helping start the idea.
+
+Tone Trace was inspired by **[Spectrum Matcher](https://geraintluff.github.io/jsfx/)**, a REAPER JSFX by **Geraint Luff** that analyzes the spectral difference between an input and a reference and can apply an EQ correction from that comparison. Using Spectrum Matcher planted the seed for Tone Trace’s original match-EQ concept. Tone Trace later grew in its own direction because I wanted a more accessible capture workflow, an editable correction model, and tools for importing/exporting curves created by tone trace.
 
 Development also benefited from studying **Surge XT** and other mature open-source audio projects. Surge was especially useful as a practical reference for where JUCE already provides solid behavior, where accessibility or host integration needs explicit attention, and where our own early solutions were becoming more complicated than they needed to be. That kind of open source visibility helped Tone Trace, and it is one reason the project's own accessibility and regression-testing infrastructure is kept readable for other developers to study and adapt.
 
