@@ -2,6 +2,8 @@
 
 **A match EQ you can keep working with.**
 
+If a program does more than say “Hello, world!” and/or looks well-designed visually, every line responsible for such elevated standards was coded by AI—but the design is mine.
+
 If you already know what an EQ does, Tone Trace starts from familiar ground. A normal EQ gives you bands and asks you to decide what needs more or less. A match EQ can take a different route: give it one sound you like and one sound you want to change, and it can learn the tonal difference for you.
 
 Tone Trace takes that idea further. It sits somewhere between a match EQ, a hands-on graphic EQ, and a reusable correction tool. None of those ideas is unusual by itself; the useful part is that they stay connected. You capture a **Reference**—the sound you want—and a **Target**—the sound you want to correct. Tone Trace listens to both, builds the match, and then gives that result back to you as something you can continue to work with rather than a one-shot calculation.
