@@ -202,10 +202,11 @@ distributing a derivative must meet the applicable JUCE terms themselves.
 ## Acknowledgements
 
 
-Tone Trace was inspired by **[Spectrum Matcher](https://geraintluff.github.io/jsfx/)**, a REAPER JSFX by **Geraint Luff** that analyzes the spectral difference between an input and a reference and can apply an EQ correction from that comparison. Using Spectrum Matcher planted the seed for Tone Trace’s original match-EQ concept. Tone Trace later grew in its own direction because I wanted a more accessible capture workflow, an editable correction model, and tools for importing/exporting curves created by tone trace.
+Tone Trace was inspired by **[Spectrum Matcher](https://geraintluff.github.io/jsfx/)**, a REAPER JSFX by **Geraint Luff** that analyzes the spectral difference between an input and a reference and can apply an EQ correction from that comparison. Using Spectrum Matcher planted the seed for Tone Trace’s original match-EQ concept. Tone Trace later grew in its own direction because I wanted a more accessible capture workflow, an editable correction model, and tools for importing/exporting curves created by Tone Trace.
 
 Development also benefited from studying **Surge XT** and other mature open-source audio projects. Surge was especially useful as a practical reference for where JUCE already provides solid behavior, where accessibility or host integration needs explicit attention, and where our own early solutions were becoming more complicated than they needed to be. That kind of open source visibility helped Tone Trace, and it is one reason the project's own accessibility and regression-testing infrastructure is kept readable for other developers to study and adapt.
 
+Finally, f a program does more than say “Hello, world!” and/or looks well-designed visually, every line responsible for such elevated standards was coded by AI—but the design is mine.
 ## Contact and support
 
 Questions, bug reports, accessibility feedback, and commercial software licensing: `info@lanesaudio.com`
