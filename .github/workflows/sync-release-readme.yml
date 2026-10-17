@@ -28,31 +28,39 @@ jobs:
           readme_size = len(readme)
           tmp = asset.with_suffix('.tmp.zip')
           with zipfile.ZipFile(asset, 'r') as zin:
-              candidates = [n for n in zin.namelist() if n.lower() == 'readme.md' or (n.lower().endswith('/readme.md') and n.count('/') == 1)]
+              names = zin.namelist()
+              candidates = [n for n in names if n.lower().endswith('/docs/readme.md') or n.lower() == 'docs/readme.md']
               if len(candidates) != 1:
-                  raise SystemExit(f'Expected exactly one package README.md, found: {candidates}')
+                  raise SystemExit(f'Expected exactly one packaged docs/README.md, found: {candidates}')
               target = candidates[0]
-              manifests = [n for n in zin.namelist() if n.lower().endswith('/docs/build_manifest.txt') or n.lower() == 'docs/build_manifest.txt']
-              manifest = manifests[0] if len(manifests) == 1 else None
+              manifests = [n for n in names if n.lower().endswith('/docs/build_manifest.txt') or n.lower() == 'docs/build_manifest.txt']
+              if len(manifests) != 1:
+                  raise SystemExit(f'Expected exactly one BUILD_MANIFEST.txt, found: {manifests}')
+              manifest = manifests[0]
               with zipfile.ZipFile(tmp, 'w') as zout:
                   for info in zin.infolist():
                       data = zin.read(info.filename)
                       if info.filename == target:
                           data = readme
-                      elif manifest and info.filename == manifest:
+                      elif info.filename == manifest:
                           text = data.decode('utf-8')
                           out = []
+                          packaged_updated = False
+                          source_updated = False
                           for line in text.splitlines():
-                              if line.endswith('  README.md'):
-                                  if re.match(r'^[0-9a-fA-F]{64}\s+\d+\s+README\.md$', line):
-                                      line = f'{readme_hash}  {readme_size}  README.md'
-                                  elif re.match(r'^[0-9a-fA-F]{64}\s+README\.md$', line):
-                                      line = f'{readme_hash}  README.md'
+                              if re.match(r'^[0-9a-fA-F]{64}\s+\d+\s+docs/README\.md$', line):
+                                  line = f'{readme_hash}  {readme_size}  docs/README.md'
+                                  packaged_updated = True
+                              elif re.match(r'^[0-9a-fA-F]{64}\s+README\.md$', line):
+                                  line = f'{readme_hash}  README.md'
+                                  source_updated = True
                               out.append(line)
+                          if not packaged_updated or not source_updated:
+                              raise SystemExit(f'BUILD_MANIFEST README entries not both found: packaged={packaged_updated}, source={source_updated}')
                           data = ('\n'.join(out) + '\n').encode('utf-8')
                       zout.writestr(info, data)
           os.replace(tmp, asset)
-          print('Updated', target, 'and build manifest' if manifest else '')
+          print('Updated', target, 'and', manifest)
           PY
           newhash=$(sha256sum "$asset" | awk '{print $1}')
           gh release view "$tag" --json body -q .body > release-body.md
