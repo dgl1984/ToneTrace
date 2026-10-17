@@ -1,0 +1,72 @@
+name: Sync release README
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch existing release ZIP documentation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=v1.1.0
+          asset=ToneTrace_EQ_1.1.0_Windows_x64.zip
+          gh release download "$tag" -p "$asset"
+          python - <<'PY'
+          import hashlib, os, re, zipfile
+          from pathlib import Path
+          asset = Path('ToneTrace_EQ_1.1.0_Windows_x64.zip')
+          readme = Path('README.md').read_bytes()
+          readme_hash = hashlib.sha256(readme).hexdigest()
+          readme_size = len(readme)
+          tmp = asset.with_suffix('.tmp.zip')
+          with zipfile.ZipFile(asset, 'r') as zin:
+              candidates = [n for n in zin.namelist() if n.lower() == 'readme.md' or (n.lower().endswith('/readme.md') and n.count('/') == 1)]
+              if len(candidates) != 1:
+                  raise SystemExit(f'Expected exactly one package README.md, found: {candidates}')
+              target = candidates[0]
+              manifests = [n for n in zin.namelist() if n.lower().endswith('/docs/build_manifest.txt') or n.lower() == 'docs/build_manifest.txt']
+              manifest = manifests[0] if len(manifests) == 1 else None
+              with zipfile.ZipFile(tmp, 'w') as zout:
+                  for info in zin.infolist():
+                      data = zin.read(info.filename)
+                      if info.filename == target:
+                          data = readme
+                      elif manifest and info.filename == manifest:
+                          text = data.decode('utf-8')
+                          out = []
+                          for line in text.splitlines():
+                              if line.endswith('  README.md'):
+                                  if re.match(r'^[0-9a-fA-F]{64}\s+\d+\s+README\.md$', line):
+                                      line = f'{readme_hash}  {readme_size}  README.md'
+                                  elif re.match(r'^[0-9a-fA-F]{64}\s+README\.md$', line):
+                                      line = f'{readme_hash}  README.md'
+                              out.append(line)
+                          data = ('\n'.join(out) + '\n').encode('utf-8')
+                      zout.writestr(info, data)
+          os.replace(tmp, asset)
+          print('Updated', target, 'and build manifest' if manifest else '')
+          PY
+          newhash=$(sha256sum "$asset" | awk '{print $1}')
+          gh release view "$tag" --json body -q .body > release-body.md
+          python - "$newhash" <<'PY'
+          import re, sys
+          from pathlib import Path
+          p = Path('release-body.md')
+          text = p.read_text()
+          newhash = sys.argv[1]
+          text2, count = re.subn(r'(?m)(SHA-256 \(ToneTrace_EQ_1\.1\.0_Windows_x64\.zip\):\s*\n\s*)([0-9a-fA-F]{64})', lambda m: m.group(1) + newhash, text, count=1)
+          if count != 1:
+              raise SystemExit('Could not update ZIP SHA-256 in release notes')
+          p.write_text(text2)
+          PY
+          gh release upload "$tag" "$asset" --clobber
+          gh release edit "$tag" --notes-file release-body.md
+          echo "Uploaded $asset with SHA-256 $newhash"
