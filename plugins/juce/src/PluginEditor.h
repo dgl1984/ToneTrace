@@ -80,6 +80,8 @@ private:
     juce::ToggleButton traceButton_ { "Trace Curve" };
     juce::TextButton copyDescriptionButton_ { "Copy Curve Description" };
     int traceIndex_ = 0;
+    int curveDescriptionStage_ = -1;
+    juce::String cachedPreMatchDescription_;
     juce::Label controlsHeading_;
     ToneTraceCommandButton captureReferenceButton_;
     ToneTraceCommandButton learnTargetButton_;
