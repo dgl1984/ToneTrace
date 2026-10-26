@@ -38,6 +38,10 @@ set(TONETRACE_PLATFORM_SOURCES
   src/platform/ToneTraceStoppedTransportTone.cpp
 )
 
+set(TONETRACE_DESCRIPTION_SOURCES
+  src/ToneTracePreMatchCapture.cpp
+)
+
 add_executable(ToneTraceProductCatalogTests tests/ProductCatalogTests.cpp)
 target_include_directories(ToneTraceProductCatalogTests PRIVATE src)
 
@@ -130,6 +134,7 @@ target_sources(ToneTraceProcessorStateTests PRIVATE
   tests/ProcessorStateTests.cpp
   src/PluginProcessor.cpp
   src/PluginEditor.cpp
+  ${TONETRACE_DESCRIPTION_SOURCES}
   src/capture/ToneTraceCaptureModel.cpp
   src/correction/ToneTraceCorrectionController.cpp
   src/tone/ToneTraceNotificationTone.cpp
@@ -192,6 +197,7 @@ juce_add_plugin(ToneTraceEQ
 target_sources(ToneTraceEQ PRIVATE
   src/PluginProcessor.cpp
   src/PluginEditor.cpp
+  ${TONETRACE_DESCRIPTION_SOURCES}
   src/capture/ToneTraceCaptureModel.cpp
   src/correction/ToneTraceCorrectionController.cpp
   src/tone/ToneTraceNotificationTone.cpp
@@ -301,6 +307,7 @@ target_sources(ToneTraceVisualSnapshots PRIVATE
   tools/VisualSnapshotMain.cpp
   src/PluginProcessor.cpp
   src/PluginEditor.cpp
+  ${TONETRACE_DESCRIPTION_SOURCES}
   src/capture/ToneTraceCaptureModel.cpp
   src/correction/ToneTraceCorrectionController.cpp
   src/tone/ToneTraceNotificationTone.cpp
