@@ -3,6 +3,20 @@
 All notable Tone Trace EQ changes are recorded here. Versions follow semantic
 versioning, and release dates use `YYYY-MM-DD`.
 
+## Unreleased
+
+### Improved
+
+- **Curve Description** now becomes useful before a completed match. After
+  **Learn Target** saves a Reference, the existing field describes that
+  Reference spectrum. After **Correct Target** finalizes a Target, it describes
+  that Target while analysis runs. Once the new match is ready, Tone Trace
+  returns to the existing complete Reference/Target/Correction report.
+- Pre-match Reference and Target descriptions reuse Tone Trace's established
+  measurement language and remain descriptive rather than evaluative. No new
+  control, label, focus position, GUI layout, matching behavior, or completed
+  match report is introduced by this change.
+
 ## [1.1.0] - 2026-10-03
 
 Tone Trace EQ 1.1.0 moves to JUCE, a cross-platform foundation that makes future
