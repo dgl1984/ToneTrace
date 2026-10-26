@@ -40,6 +40,7 @@ set(TONETRACE_PLATFORM_SOURCES
 
 set(TONETRACE_DESCRIPTION_SOURCES
   src/ToneTracePreMatchCapture.cpp
+  src/controls/ToneTraceCurveDescriptionField.cpp
 )
 
 add_executable(ToneTraceProductCatalogTests tests/ProductCatalogTests.cpp)
