@@ -26,8 +26,6 @@ MatchSettings CorrectionController::makeMatchSettings(const CorrectionSettings& 
 {
     MatchSettings match;
     match.mode = settings.mode;
-    // Released 1.0.5 captures/retains the full analysis range. Low/High are a
-    // render mask and therefore live in IrRenderSettings below.
     match.rangeLowHz = 10.0;
     match.rangeHighHz = 30000.0;
     match.resolution = std::clamp(settings.resolution, 1, 120);
@@ -43,11 +41,6 @@ IrRenderSettings CorrectionController::makeRenderSettings(const CorrectionSettin
     render.sampleRate = sampleRate_;
     render.correctionStrength = settings.correctionStrength;
     render.correctionSharpness = settings.correctionSharpness;
-    // Product Foundation 01a/Candidate C already proved Correction Gain as one
-    // separate 20 ms JUCE output-trim stage. Keep that single ownership path;
-    // the learned profile is rendered at 0 dB global gain and the JUCE stage is
-    // applied afterwards. Static transfer therefore matches released 1.0.5
-    // without creating two owners for the same parameter.
     render.correctionGainDb = 0.0;
     render.rangeLowHz = settings.rangeLowHz;
     render.rangeHighHz = settings.rangeHighHz;
@@ -55,11 +48,18 @@ IrRenderSettings CorrectionController::makeRenderSettings(const CorrectionSettin
     return render;
 }
 
+void CorrectionController::clearInProgressTarget()
+{
+    const std::lock_guard<std::mutex> lock(analysisCaptureMutex_);
+    inProgressTarget_.reset();
+}
+
 CorrectionResult CorrectionController::prepare(int sampleRate, std::size_t channels)
 {
     if (sampleRate < 8000 || sampleRate > 768000 || channels == 0 || channels > 2)
         return failure(ProfileIssue::InvalidModel, "Invalid realtime configuration");
 
+    clearInProgressTarget();
     const std::lock_guard<std::mutex> lock(controlMutex_);
     if (core_ != nullptr && sampleRate_ == sampleRate && channels_ == channels)
         return { true, ProfileIssue::None, "Realtime core already prepared", 0.0 };
@@ -106,6 +106,7 @@ CorrectionResult CorrectionController::analyze(const AudioBuffer& referenceAudio
                                                 const SpectrumCapture* importedReference,
                                                 const SpectrumCapture* importedTarget)
 {
+    clearInProgressTarget();
     const std::lock_guard<std::mutex> lock(controlMutex_);
     if (core_ == nullptr || sampleRate_ <= 0)
         return failure(ProfileIssue::RendererBusy, "Realtime core is not prepared");
@@ -118,6 +119,10 @@ CorrectionResult CorrectionController::analyze(const AudioBuffer& referenceAudio
             ? *importedReference : engine.capture(referenceAudio, uncapped);
         const auto target = importedTarget != nullptr
             ? *importedTarget : engine.capture(targetAudio, uncapped);
+        {
+            const std::lock_guard<std::mutex> captureLock(analysisCaptureMutex_);
+            inProgressTarget_ = target;
+        }
         auto model = engine.match(reference, target, uncapped);
 
         ProfileSnapshot candidate;
@@ -142,6 +147,7 @@ CorrectionResult CorrectionController::analyze(const AudioBuffer& referenceAudio
 
 CorrectionResult CorrectionController::rebuild(const CorrectionSettings& settings)
 {
+    clearInProgressTarget();
     const std::lock_guard<std::mutex> lock(controlMutex_);
     if (core_ == nullptr)
         return failure(ProfileIssue::RendererBusy, "Realtime core is not prepared");
@@ -181,6 +187,7 @@ CorrectionResult CorrectionController::rebuild(const CorrectionSettings& setting
 
 CorrectionResult CorrectionController::commitManualCorrection(const CorrectionSettings& settings)
 {
+    clearInProgressTarget();
     const std::lock_guard<std::mutex> lock(controlMutex_);
     if (core_ == nullptr)
         return failure(ProfileIssue::RendererBusy, "Realtime core is not prepared");
@@ -200,6 +207,7 @@ CorrectionResult CorrectionController::commitManualCorrection(const CorrectionSe
 
 CorrectionResult CorrectionController::commitSnapshot(const ProfileSnapshot& snapshot)
 {
+    clearInProgressTarget();
     const std::lock_guard<std::mutex> lock(controlMutex_);
     if (core_ == nullptr)
         return failure(ProfileIssue::RendererBusy, "Realtime core is not prepared");
@@ -221,6 +229,7 @@ CorrectionResult CorrectionController::commitSnapshot(const ProfileSnapshot& sna
 
 CorrectionResult CorrectionController::reset()
 {
+    clearInProgressTarget();
     const std::lock_guard<std::mutex> lock(controlMutex_);
     if (core_ == nullptr)
     {
@@ -242,6 +251,7 @@ CorrectionResult CorrectionController::reset()
 
 CorrectionResult CorrectionController::restoreProjectState(const std::string& bytes)
 {
+    clearInProgressTarget();
     RestoredProjectState restored;
     try
     {
@@ -305,6 +315,12 @@ std::unique_ptr<ProfileSnapshot> CorrectionController::snapshotCopy() const
     return std::make_unique<ProfileSnapshot>(*core_->frozenSnapshot());
 }
 
+std::optional<SpectrumCapture> CorrectionController::inProgressTargetCopy() const
+{
+    const std::lock_guard<std::mutex> lock(analysisCaptureMutex_);
+    return inProgressTarget_;
+}
+
 void CorrectionController::resetAudio() noexcept
 {
     if (core_ != nullptr) core_->resetAudio();
@@ -316,7 +332,7 @@ void CorrectionController::process(const float* const* inputs,
                                    std::size_t frames) noexcept
 {
     auto* core = core_.get();
-    if (core == nullptr) return;
+    if (core_ == nullptr) return;
     core->process(inputs, outputs, channelCount, frames);
 }
 
