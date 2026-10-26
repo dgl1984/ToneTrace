@@ -101,9 +101,8 @@ int main()
                                            diagnosticsFor(target), settings);
     require(result.accepted, "released engine analysis was rejected through controller");
     require(controller.hasProfile(), "successful analysis did not install a profile");
-    const auto firstTargetReport = controller.inProgressTargetCopy();
-    require(firstTargetReport.has_value() && !firstTargetReport->points.empty(),
-            "analysis did not publish its Target spectrum for reporting");
+    require(!controller.inProgressTargetCopy().has_value(),
+            "completed analysis left its Target reporting window open");
 
     const auto saved = controller.saveProjectState();
     require(saved.find("phase frozen") != std::string::npos,
@@ -148,10 +147,8 @@ int main()
     require(controller.analyze(noRawAudio, noRawAudio, {}, {}, settings,
                                &importedReference, &importedTarget).accepted,
             "imported Reference/Target analysis did not use the shared controller path");
-    const auto importedTargetReport = controller.inProgressTargetCopy();
-    require(importedTargetReport.has_value()
-                && importedTargetReport->points.size() == importedTarget.points.size(),
-            "imported Target was not published through the reporting snapshot path");
+    require(!controller.inProgressTargetCopy().has_value(),
+            "completed imported analysis left its Target reporting window open");
 
     settings.correctionSharpness = 1.25;
     require(controller.rebuild(settings).accepted,
@@ -217,8 +214,16 @@ int main()
 
     while (!analysisStarted.load(std::memory_order_acquire)) std::this_thread::yield();
     std::size_t saveCount = 0;
+    bool sawTargetReport = false;
     do
     {
+        if (const auto report = concurrent.inProgressTargetCopy(); report.has_value())
+        {
+            require(!report->points.empty(),
+                    "in-progress Target reporting spectrum contained no points");
+            sawTargetReport = true;
+        }
+
         const auto state = concurrent.saveProjectState();
         try
         {
@@ -240,9 +245,10 @@ int main()
     analysis.join();
     require(concurrentResult.accepted, "concurrent analysis failed");
     require(saveCount > 0, "concurrent state-save test did not execute");
-    const auto concurrentTargetReport = concurrent.inProgressTargetCopy();
-    require(concurrentTargetReport.has_value() && !concurrentTargetReport->points.empty(),
-            "concurrent Correct did not retain the Target reporting spectrum");
+    require(sawTargetReport,
+            "long Correct never exposed its Target spectrum during analysis");
+    require(!concurrent.inProgressTargetCopy().has_value(),
+            "completed Correct left the transient Target reporting window open");
     const auto finalConcurrentState = deserializeProjectState(concurrent.saveProjectState());
     require(finalConcurrentState.phase == WorkflowPhase::Frozen
                 && finalConcurrentState.snapshot != nullptr,
