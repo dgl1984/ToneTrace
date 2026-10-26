@@ -21,5 +21,9 @@ std::optional<tonetrace::SpectrumCapture> ToneTraceProcessor::preMatchTargetCapt
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    return correctionController_.inProgressTargetCopy();
+    if (statusCode() == static_cast<int>(tonetrace::capture::Status::Preview)
+        && phase_.load(std::memory_order_acquire) == tonetrace::capture::WorkflowPhase::Preview)
+        return exportableTarget();
+
+    return std::nullopt;
 }
