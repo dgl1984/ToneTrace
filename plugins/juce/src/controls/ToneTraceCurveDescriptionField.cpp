@@ -4,11 +4,41 @@
 #include "PluginProcessor.h"
 #include "tonetrace/tonetrace_describe.h"
 
+ToneTraceCurveDescriptionField::ToneTraceCurveDescriptionField(
+    const juce::String& name,
+    const juce::String& description,
+    bool multiLine,
+    bool contextSensitive)
+    : ToneTraceReadOnlyField(name, description, multiLine),
+      contextSensitive_(contextSensitive)
+{
+    if (contextSensitive_)
+        worker_ = std::thread([this] { workerLoop(); });
+}
+
+ToneTraceCurveDescriptionField::~ToneTraceCurveDescriptionField()
+{
+    if (!contextSensitive_) return;
+    {
+        const std::lock_guard<std::mutex> lock(workerMutex_);
+        workerExit_ = true;
+        pendingJob_.reset();
+    }
+    workerCv_.notify_all();
+    if (worker_.joinable()) worker_.join();
+}
+
 void ToneTraceCurveDescriptionField::setContent(
     const juce::String& normalDescription,
     bool announce,
     juce::AccessibilityHandler::AnnouncementPriority priority)
 {
+    if (!contextSensitive_)
+    {
+        ToneTraceReadOnlyField::setContent(normalDescription, announce, priority);
+        return;
+    }
+
     auto* editor = findParentComponentOfClass<ToneTraceEditor>();
     if (editor == nullptr)
     {
@@ -17,47 +47,97 @@ void ToneTraceCurveDescriptionField::setContent(
     }
 
     auto& processor = editor->processor_;
-
-    // The normal completed-match report remains authoritative. These two
-    // stages only replace its display while a newer capture is waiting to be
-    // matched, so an existing last-known-good correction can stay active.
     int stage = 0;
     if (processor.analysisBusy() && processor.workflowStep() == 3)
-        stage = 2; // Correct/import has finalized Target; replacement is analyzing.
+        stage = 2;
     else if (processor.workflowStep() == 2)
-        stage = 1; // Reference is finalized and Target capture is in progress.
+        stage = 1;
 
-    if (stage == 1)
+    const int status = processor.statusCode();
+    const bool importedReferenceRefresh = stage == 1
+        && status == static_cast<int>(tonetrace::capture::Status::ImportedReference)
+        && status != lastStatus_;
+    const bool importedTargetRefresh = stage == 2
+        && status == static_cast<int>(tonetrace::capture::Status::ImportedTarget)
+        && status != lastStatus_;
+    lastStatus_ = status;
+
+    if (stage != stage_ || importedReferenceRefresh || importedTargetRefresh)
     {
-        const bool importedReference = processor.statusCode()
-            == static_cast<int>(tonetrace::capture::Status::ImportedReference);
-        if (stage_ != stage || importedReference)
-        {
-            const auto capture = processor.exportableReference();
-            cachedDescription_ = capture.has_value()
-                ? "Reference\n" + juce::String::fromUTF8(tonetrace::describeCapture(*capture).c_str())
-                : normalDescription;
-        }
         stage_ = stage;
+        ++generation_;
+        cachedDescription_.clear();
+        if (stage == 1 || stage == 2)
+            queueReport(processor, stage);
+    }
+
+    if (stage == 0)
+    {
+        ToneTraceReadOnlyField::setContent(normalDescription, announce, priority);
+        return;
+    }
+
+    if (cachedDescription_.isNotEmpty())
+    {
         ToneTraceReadOnlyField::setContent(cachedDescription_, announce, priority);
         return;
     }
 
-    if (stage == 2)
-    {
-        if (stage_ != stage)
-        {
-            const auto capture = processor.preMatchTargetCaptureCopy();
-            cachedDescription_ = capture.has_value()
-                ? "Target\n" + juce::String::fromUTF8(tonetrace::describeCapture(*capture).c_str())
-                : normalDescription;
-        }
-        stage_ = stage;
-        ToneTraceReadOnlyField::setContent(cachedDescription_, announce, priority);
-        return;
-    }
+    ToneTraceReadOnlyField::setContent(
+        stage == 1 ? "Reference report is being prepared."
+                   : "Target report is being prepared.",
+        false,
+        priority);
+}
 
-    stage_ = stage;
-    cachedDescription_.clear();
-    ToneTraceReadOnlyField::setContent(normalDescription, announce, priority);
+void ToneTraceCurveDescriptionField::queueReport(ToneTraceProcessor& processor, int stage)
+{
+    const std::lock_guard<std::mutex> lock(workerMutex_);
+    pendingJob_ = ReportJob { &processor, stage, generation_ };
+    workerCv_.notify_one();
+}
+
+void ToneTraceCurveDescriptionField::workerLoop()
+{
+    for (;;)
+    {
+        ReportJob job;
+        {
+            std::unique_lock<std::mutex> lock(workerMutex_);
+            workerCv_.wait(lock, [this] { return workerExit_ || pendingJob_.has_value(); });
+            if (workerExit_) return;
+            job = *pendingJob_;
+            pendingJob_.reset();
+        }
+
+        std::optional<tonetrace::SpectrumCapture> capture;
+        if (job.processor != nullptr)
+        {
+            if (job.stage == 1)
+                capture = job.processor->exportableReference();
+            else if (job.stage == 2)
+            {
+                capture = job.processor->preMatchTargetCaptureCopy();
+                if (!capture.has_value()) capture = job.processor->exportableTarget();
+            }
+        }
+
+        juce::String description;
+        if (capture.has_value())
+        {
+            description = job.stage == 1 ? "Reference\n" : "Target\n";
+            description += juce::String::fromUTF8(tonetrace::describeCapture(*capture).c_str());
+        }
+
+        const auto safe = juce::Component::SafePointer<ToneTraceCurveDescriptionField>(this);
+        juce::MessageManager::callAsync([safe, generation = job.generation,
+                                         stage = job.stage, description]
+        {
+            if (safe == nullptr || safe->generation_ != generation || safe->stage_ != stage)
+                return;
+            if (description.isEmpty()) return;
+            safe->cachedDescription_ = description;
+            safe->ToneTraceReadOnlyField::setContent(description, false);
+        });
+    }
 }
