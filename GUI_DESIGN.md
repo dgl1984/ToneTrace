@@ -13,8 +13,18 @@ exact dB value. Resolution is also available on each Bands page.
 The graph, Curve Readout, and Trace Curve toggle remain available across pages.
 Reference (warm) means the desired sound; Target (blue) means the sound being
 corrected; Correction (thick light line) shows the tonal EQ. The graph is visual
-only. Curve Description uses the released description engine; Curve Readout
-provides exact frequency and curve values for pointer or keyboard navigation.
+only. Curve Description uses the released description engine. Once Reference is
+saved and Target learning begins, the field describes that Reference spectrum.
+After Correct finalizes Target and analysis begins, it describes the Target
+spectrum. When the new match is ready, the same field returns to the complete
+released Reference/Target/Correction report. These pre-match descriptions are
+measurement-only: they report spectral shape and do not judge the material or
+infer artistic intent. Curve Readout provides exact frequency and curve values
+for pointer or keyboard navigation.
+
+This reporting change does not add, move, or rename any control. The Curve
+Description field keeps its existing accessible name, focus position, Copy Curve
+Description behavior, and completed-match report path.
 
 JUCE controls expose accessible names, roles, and values. Bands intentionally
 provide a string Value interface with dB units rather than RangeValue, avoiding
