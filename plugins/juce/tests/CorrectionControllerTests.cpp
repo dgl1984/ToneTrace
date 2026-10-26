@@ -70,9 +70,6 @@ int main()
     require(controller.prepare(rate, 2).accepted, "controller prepare failed");
     require(!controller.hasProfile(), "fresh controller unexpectedly has a profile");
 
-    // Manual-only EQ must be installable before any learned profile and must
-    // remain distinct from hasProfile(), because project state persists its
-    // editable grid in the JUCE wrapper rather than inventing a fake match.
     CorrectionSettings manualSettings;
     manualSettings.resolution = 3;
     manualSettings.manualGains = { 0.0, 6.0, 0.0 };
@@ -101,35 +98,32 @@ int main()
                                            diagnosticsFor(target), settings);
     require(result.accepted, "released engine analysis was rejected through controller");
     require(controller.hasProfile(), "successful analysis did not install a profile");
+    const auto firstTargetReport = controller.inProgressTargetCopy();
+    require(firstTargetReport.has_value() && !firstTargetReport->points.empty(),
+            "analysis did not publish its Target spectrum for reporting");
 
     const auto saved = controller.saveProjectState();
     require(saved.find("phase frozen") != std::string::npos,
             "saved controller state did not contain a frozen profile");
 
-    // Malformed restore is atomic: validation failure may not alter the live
-    // profile or the independently cached last-known-good project state.
     const auto malformed = controller.restoreProjectState("not a Tone Trace project state");
     require(!malformed.accepted, "malformed project state was accepted");
     require(controller.hasProfile(), "malformed restore cleared the live profile");
     require(controller.saveProjectState() == saved,
             "malformed restore changed the cached last-known-good state");
 
-    // Reset uses the same click-safe released core transition as Ready-state
-    // restore, clears learned state, and refreshes the controller's cached state.
     require(controller.reset().accepted, "controller reset failed");
     require(!controller.hasProfile(), "controller reset left a learned profile active");
     require(controller.saveProjectState() == serializeProjectState(nullptr),
             "controller reset did not publish Ready state");
+    require(!controller.inProgressTargetCopy().has_value(),
+            "controller reset left a stale Target reporting spectrum");
 
-    // Reinstall a learned profile so rebuild/restore tests below still exercise
-    // the same post-analysis path after Reset.
     require(controller.analyze(reference, target,
                                diagnosticsFor(reference), diagnosticsFor(target),
                                settings).accepted,
             "analysis after controller reset failed");
 
-    // Imported Target analysis uses the same worker/controller path as live
-    // capture. Neither imported spectrum should require raw audio to exist.
     MatchEngine importedEngine;
     MatchSettings importedMatch;
     importedMatch.mode = MatchMode::FullMix;
@@ -143,10 +137,16 @@ int main()
     require(controller.analyze(noRawAudio, noRawAudio, {}, {}, settings,
                                &importedReference, &importedTarget).accepted,
             "imported Reference/Target analysis did not use the shared controller path");
+    const auto importedTargetReport = controller.inProgressTargetCopy();
+    require(importedTargetReport.has_value()
+                && importedTargetReport->points.size() == importedTarget.points.size(),
+            "imported Target was not published through the reporting snapshot path");
 
     settings.correctionSharpness = 1.25;
     require(controller.rebuild(settings).accepted,
             "post-match sharpness rebuild failed");
+    require(!controller.inProgressTargetCopy().has_value(),
+            "profile rebuild left a stale in-progress Target report");
     settings.mode = MatchMode::Voice;
     require(controller.rebuild(settings).accepted,
             "retained-spectrum Match Mode reinterpretation failed");
@@ -185,9 +185,6 @@ int main()
     require(restored.saveProjectState() == ready,
             "Ready-state restore did not refresh the cached state");
 
-    // Saving state must be independent of long analysis ownership. The cache is
-    // allowed to return the previous complete state until the new profile commits,
-    // but it must never expose a partial serialization or wait on MatchEngine.
     CorrectionController concurrent;
     require(concurrent.prepare(rate, 2).accepted, "concurrent controller prepare failed");
     const auto longReference = makeProgram(rate, 10.0, 0.18, 0.05);
@@ -229,6 +226,9 @@ int main()
     analysis.join();
     require(concurrentResult.accepted, "concurrent analysis failed");
     require(saveCount > 0, "concurrent state-save test did not execute");
+    const auto concurrentTargetReport = concurrent.inProgressTargetCopy();
+    require(concurrentTargetReport.has_value() && !concurrentTargetReport->points.empty(),
+            "concurrent Correct did not retain the Target reporting spectrum");
     const auto finalConcurrentState = deserializeProjectState(concurrent.saveProjectState());
     require(finalConcurrentState.phase == WorkflowPhase::Frozen
                 && finalConcurrentState.snapshot != nullptr,
