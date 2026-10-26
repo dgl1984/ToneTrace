@@ -36,6 +36,7 @@ private:
 
     const bool contextSensitive_ = true;
     int stage_ = -1;
+    int lastStatus_ = -1;
     std::uint64_t generation_ = 0;
     juce::String cachedDescription_;
 
