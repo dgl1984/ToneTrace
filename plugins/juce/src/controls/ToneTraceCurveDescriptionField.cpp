@@ -4,6 +4,9 @@
 #include "PluginProcessor.h"
 #include "tonetrace/tonetrace_describe.h"
 
+#include <chrono>
+#include <thread>
+
 ToneTraceCurveDescriptionField::ToneTraceCurveDescriptionField(
     const juce::String& name,
     const juce::String& description,
@@ -116,7 +119,20 @@ void ToneTraceCurveDescriptionField::workerLoop()
             if (job.stage == 1)
                 capture = job.processor->exportableReference();
             else if (job.stage == 2)
-                capture = job.processor->preMatchTargetCaptureCopy();
+            {
+                for (;;)
+                {
+                    capture = job.processor->preMatchTargetCaptureCopy();
+                    if (capture.has_value() || !job.processor->analysisBusy()) break;
+                    {
+                        const std::lock_guard<std::mutex> lock(workerMutex_);
+                        if (workerExit_) return;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                if (!capture.has_value())
+                    capture = job.processor->preMatchTargetCaptureCopy();
+            }
         }
 
         juce::String description;
