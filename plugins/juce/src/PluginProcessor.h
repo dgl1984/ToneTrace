@@ -113,6 +113,7 @@ public:
     [[nodiscard]] double captureConfidence() const noexcept;
     [[nodiscard]] double curveDriftDb() const noexcept;
     [[nodiscard]] bool captureActive() const noexcept;
+    [[nodiscard]] bool analysisBusy() const noexcept { return analysisBusy_.load(std::memory_order_acquire); }
     [[nodiscard]] bool profileActive() const noexcept { return hasProfile_.load(std::memory_order_acquire); }
     [[nodiscard]] juce::String statusSummary() const;
 
@@ -123,6 +124,7 @@ public:
     [[nodiscard]] double graphMaximumCorrectionDb() const noexcept;
     [[nodiscard]] std::optional<tonetrace::SpectrumCapture> exportableReference() const;
     [[nodiscard]] std::optional<tonetrace::SpectrumCapture> exportableTarget() const;
+    [[nodiscard]] std::optional<tonetrace::SpectrumCapture> preMatchTargetCaptureCopy() const;
     [[nodiscard]] std::optional<tonetrace::AudioBuffer> exportableImpulseResponse() const;
     [[nodiscard]] std::vector<double> manualGainsCopy() const;
     [[nodiscard]] int bandCount() const noexcept;
