@@ -58,12 +58,9 @@ void ToneTraceCurveDescriptionField::setContent(
 
     const int status = processor.statusCode();
     const bool importedReferenceRefresh = stage == 1
-        && status == static_cast<int>(tonetrace::capture::Status::ImportedReference)
-        && status != lastStatus_;
+        && status == static_cast<int>(tonetrace::capture::Status::ImportedReference);
     const bool importedTargetRefresh = stage == 2
-        && status == static_cast<int>(tonetrace::capture::Status::ImportedTarget)
-        && status != lastStatus_;
-    lastStatus_ = status;
+        && status == static_cast<int>(tonetrace::capture::Status::ImportedTarget);
 
     if (stage != stage_ || importedReferenceRefresh || importedTargetRefresh)
     {
@@ -113,44 +110,52 @@ void ToneTraceCurveDescriptionField::workerLoop()
             pendingJob_.reset();
         }
 
-        std::optional<tonetrace::SpectrumCapture> capture;
-        if (job.processor != nullptr)
+        try
         {
-            if (job.stage == 1)
-                capture = job.processor->exportableReference();
-            else if (job.stage == 2)
+            std::optional<tonetrace::SpectrumCapture> capture;
+            if (job.processor != nullptr)
             {
-                for (;;)
+                if (job.stage == 1)
+                    capture = job.processor->exportableReference();
+                else if (job.stage == 2)
                 {
-                    capture = job.processor->preMatchTargetCaptureCopy();
-                    if (capture.has_value() || !job.processor->analysisBusy()) break;
+                    for (;;)
                     {
-                        const std::lock_guard<std::mutex> lock(workerMutex_);
-                        if (workerExit_) return;
+                        capture = job.processor->preMatchTargetCaptureCopy();
+                        if (capture.has_value() || !job.processor->analysisBusy()) break;
+                        {
+                            const std::lock_guard<std::mutex> lock(workerMutex_);
+                            if (workerExit_) return;
+                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
                     }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    if (!capture.has_value())
+                        capture = job.processor->preMatchTargetCaptureCopy();
                 }
-                if (!capture.has_value())
-                    capture = job.processor->preMatchTargetCaptureCopy();
             }
-        }
 
-        juce::String description;
-        if (capture.has_value())
-        {
-            description = job.stage == 1 ? "Reference\n" : "Target\n";
-            description += juce::String::fromUTF8(tonetrace::describeCapture(*capture).c_str());
-        }
+            juce::String description;
+            if (capture.has_value())
+            {
+                description = job.stage == 1 ? "Reference\n" : "Target\n";
+                description += juce::String::fromUTF8(tonetrace::describeCapture(*capture).c_str());
+            }
 
-        const auto safe = juce::Component::SafePointer<ToneTraceCurveDescriptionField>(this);
-        juce::MessageManager::callAsync([safe, generation = job.generation,
-                                         stage = job.stage, description]
+            const auto safe = juce::Component::SafePointer<ToneTraceCurveDescriptionField>(this);
+            juce::MessageManager::callAsync([safe, generation = job.generation,
+                                             stage = job.stage, description]
+            {
+                if (safe == nullptr || safe->generation_ != generation || safe->stage_ != stage)
+                    return;
+                if (description.isEmpty()) return;
+                safe->cachedDescription_ = description;
+                safe->ToneTraceReadOnlyField::setContent(description, false);
+            });
+        }
+        catch (...)
         {
-            if (safe == nullptr || safe->generation_ != generation || safe->stage_ != stage)
-                return;
-            if (description.isEmpty()) return;
-            safe->cachedDescription_ = description;
-            safe->ToneTraceReadOnlyField::setContent(description, false);
-        });
+            // Reporting is descriptive-only. A failed report must never take
+            // down the editor or alter capture/correction state.
+        }
     }
 }
