@@ -25,11 +25,12 @@ For VST3, copy the entire `plugins\vst3\Tone Trace EQ.vst3` folder to
 plug-ins in the host. The ZIP also contains the user documentation, release notes, licenses, and `docs\BUILD_MANIFEST.txt` with a SHA-256 hash for every packaged file. It contains no installer, developer tools, tests, or debug
 symbols, and it changes nothing until you copy a plug-in.
 
-This package is the JUCE port of the 1.0.5 feature set, using its unchanged matching
-and realtime engine. The CLAP ID and numeric parameter IDs are retained, and the
-port reads 1.0.5 CLAP states. Keep a backup
-before updating projects: states saved by 1.1 are not readable by 1.0.5. VST3
-is a separate host plug-in identity, so existing CLAP instances stay CLAP.
+The Windows JUCE port retains the unchanged 1.0.5 matching and realtime engine,
+while the shared editor and accessibility layer can continue to improve around
+that protected DSP boundary. The CLAP ID and numeric parameter IDs are retained,
+and the port reads 1.0.5 CLAP states. Keep a backup before updating projects:
+states saved by 1.1 are not readable by 1.0.5. VST3 is a separate host plug-in
+identity, so existing CLAP instances stay CLAP.
 
 ## The one rule to remember
 
