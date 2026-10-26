@@ -134,14 +134,14 @@ CorrectionResult CorrectionController::analyze(const AudioBuffer& referenceAudio
     {
         MatchEngine engine;
         const auto uncapped = makeMatchSettings(settings, true);
-        const auto reference = importedReference != nullptr
-            ? *importedReference : engine.capture(referenceAudio, uncapped);
         const auto target = importedTarget != nullptr
             ? *importedTarget : engine.capture(targetAudio, uncapped);
         {
             const std::lock_guard<std::mutex> captureLock(analysisCaptureMutex_);
             inProgressTarget_ = target;
         }
+        const auto reference = importedReference != nullptr
+            ? *importedReference : engine.capture(referenceAudio, uncapped);
         auto model = engine.match(reference, target, uncapped);
 
         ProfileSnapshot candidate;
