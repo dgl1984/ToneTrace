@@ -5,17 +5,22 @@ versioning, and release dates use `YYYY-MM-DD`.
 
 ## Unreleased
 
-### Improved
+### Added
 
-- **Curve Description** now becomes useful before a completed match. After
-  **Learn Target** saves a Reference, the existing field describes that
-  Reference spectrum. After **Correct Target** finalizes a Target, it describes
-  that Target while analysis runs. Once the new match is ready, Tone Trace
-  returns to the existing complete Reference/Target/Correction report.
-- Pre-match Reference and Target descriptions reuse Tone Trace's established
-  measurement language and remain descriptive rather than evaluative. No new
-  control, label, focus position, GUI layout, matching behavior, or completed
-  match report is introduced by this change.
+- **Full reports throughout the capture and matching workflow.** Tone Trace no
+  longer waits for a completed correction before Curve Description becomes
+  useful. After **Learn Target** saves a Reference, the existing field provides
+  a full objective report of that Reference spectrum. After **Correct Target**
+  finalizes a Target, the same field provides a full objective report of the
+  Target while analysis runs. When the match is ready, the field returns to the
+  complete Reference/Target/Correction comparison report.
+- This makes Tone Trace useful as an accessible spectrum-analysis tool at each
+  major phase, not only as a post-match correction reporter. The reports describe
+  measurable spectral structure without judging the material as muddy, harsh,
+  good, bad, or otherwise interpreting artistic intent.
+- The feature adds information without adding UI: there is no new control,
+  label, focus position, layout, matching behavior, or replacement for the
+  existing completed-match report.
 
 ## [1.1.0] - 2026-10-03
 
