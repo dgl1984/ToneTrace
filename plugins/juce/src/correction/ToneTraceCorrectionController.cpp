@@ -134,14 +134,29 @@ CorrectionResult CorrectionController::analyze(const AudioBuffer& referenceAudio
     {
         MatchEngine engine;
         const auto uncapped = makeMatchSettings(settings, true);
-        const auto target = importedTarget != nullptr
-            ? *importedTarget : engine.capture(targetAudio, uncapped);
+
+        // Target is computed first so its report is available while Reference
+        // analysis and matching continue. If Target capture itself fails, defer
+        // that exception until Reference has been checked so released Reference-
+        // first validation/error precedence remains unchanged.
+        std::optional<SpectrumCapture> targetCapture;
+        std::exception_ptr targetFailure;
+        try
         {
+            targetCapture = importedTarget != nullptr
+                ? *importedTarget : engine.capture(targetAudio, uncapped);
             const std::lock_guard<std::mutex> captureLock(analysisCaptureMutex_);
-            inProgressTarget_ = target;
+            inProgressTarget_ = *targetCapture;
         }
+        catch (...)
+        {
+            targetFailure = std::current_exception();
+        }
+
         const auto reference = importedReference != nullptr
             ? *importedReference : engine.capture(referenceAudio, uncapped);
+        if (targetFailure != nullptr) std::rethrow_exception(targetFailure);
+        const auto target = std::move(*targetCapture);
         auto model = engine.match(reference, target, uncapped);
 
         ProfileSnapshot candidate;
