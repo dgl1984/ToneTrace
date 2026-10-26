@@ -98,6 +98,7 @@ private:
     mutable std::mutex analysisCaptureMutex_;
     std::string cachedProjectState_ { serializeProjectState(nullptr) };
     std::optional<SpectrumCapture> inProgressTarget_;
+    bool analysisCaptureActive_ = false; // guarded by analysisCaptureMutex_
     std::unique_ptr<HeadlessPluginCore> core_;
     int sampleRate_ = 0;
     std::size_t channels_ = 0;
