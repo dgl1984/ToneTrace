@@ -77,8 +77,8 @@ private:
     juce::Label subtitle_;
     ToneTracePageSelector pageSelector_;
     ToneTraceGraphSurface graphSurface_;
-    ToneTraceReadOnlyField curveReadout_ { "Curve Readout", "Exact frequency and curve values.", true };
-    ToneTraceCurveDescriptionField curveDescription_ { "Curve Description", "Reference, Target, and applied correction description.", true };
+    ToneTraceCurveDescriptionField curveReadout_ { "Curve Readout", "Exact frequency and curve values.", true, false };
+    ToneTraceCurveDescriptionField curveDescription_ { "Curve Description", "Reference, Target, and applied correction description.", true, true };
     juce::Label curveDescriptionLabel_;
     juce::ToggleButton traceButton_ { "Trace Curve" };
     juce::TextButton copyDescriptionButton_ { "Copy Curve Description" };
