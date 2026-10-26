@@ -58,6 +58,7 @@ IrRenderSettings CorrectionController::makeRenderSettings(const CorrectionSettin
 void CorrectionController::clearInProgressTarget()
 {
     const std::lock_guard<std::mutex> lock(analysisCaptureMutex_);
+    analysisCaptureActive_ = false;
     inProgressTarget_.reset();
 }
 
@@ -118,6 +119,17 @@ CorrectionResult CorrectionController::analyze(const AudioBuffer& referenceAudio
     if (core_ == nullptr || sampleRate_ <= 0)
         return failure(ProfileIssue::RendererBusy, "Realtime core is not prepared");
 
+    {
+        const std::lock_guard<std::mutex> captureLock(analysisCaptureMutex_);
+        analysisCaptureActive_ = true;
+    }
+
+    const auto finishReportWindow = [this]
+    {
+        const std::lock_guard<std::mutex> captureLock(analysisCaptureMutex_);
+        analysisCaptureActive_ = false;
+    };
+
     try
     {
         MatchEngine engine;
@@ -144,10 +156,12 @@ CorrectionResult CorrectionController::analyze(const AudioBuffer& referenceAudio
         const auto validation = core_->commitCandidate(candidate);
         if (validation.accepted) refreshCachedStateLocked();
         const auto confidence = std::min(reference.confidence, target.confidence);
+        finishReportWindow();
         return resultFromValidation(validation, confidence);
     }
     catch (const std::exception& error)
     {
+        finishReportWindow();
         return failure(ProfileIssue::InvalidCapture, error.what());
     }
 }
@@ -325,7 +339,7 @@ std::unique_ptr<ProfileSnapshot> CorrectionController::snapshotCopy() const
 std::optional<SpectrumCapture> CorrectionController::inProgressTargetCopy() const
 {
     const std::lock_guard<std::mutex> lock(analysisCaptureMutex_);
-    return inProgressTarget_;
+    return analysisCaptureActive_ ? inProgressTarget_ : std::nullopt;
 }
 
 void CorrectionController::resetAudio() noexcept
