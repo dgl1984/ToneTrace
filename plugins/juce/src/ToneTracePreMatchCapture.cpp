@@ -4,14 +4,22 @@
 
 std::optional<tonetrace::SpectrumCapture> ToneTraceProcessor::preMatchTargetCaptureCopy() const
 {
-    // A live Target is owned by the audio thread until Correct changes phase to
-    // Preview. Only inspect it during that AnalyzeCaptured transaction, after
-    // any block that entered capture before the phase change has left. This
-    // keeps reporting read-only and completely outside the realtime path.
+    // A Target description is only eligible while the explicit Correct/import
+    // transaction is building the replacement profile. Existing frozen/profile
+    // snapshots remain untouched until that transaction succeeds.
     if (!analysisBusy_.load(std::memory_order_acquire)
-        || phase_.load(std::memory_order_acquire) != tonetrace::capture::WorkflowPhase::Preview
-        || !targetCorrectable_.load(std::memory_order_acquire))
+        || phase_.load(std::memory_order_acquire) != tonetrace::capture::WorkflowPhase::Preview)
         return std::nullopt;
+
+    {
+        const std::lock_guard<std::mutex> lock(manualStateMutex_);
+        if (importedTarget_.has_value()) return importedTarget_;
+    }
+
+    // A live Target is owned by the audio thread until Correct changes phase to
+    // Preview. Only inspect it after any block that entered capture before that
+    // phase change has left. Reporting stays read-only and outside realtime DSP.
+    if (!targetCorrectable_.load(std::memory_order_acquire)) return std::nullopt;
 
     while (captureWriterCount_.load(std::memory_order_acquire) != 0)
     {
