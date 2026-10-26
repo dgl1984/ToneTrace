@@ -2,7 +2,7 @@
 
 #include <JuceHeader.h>
 
-class ToneTraceReadOnlyField final : public juce::TextEditor
+class ToneTraceReadOnlyField : public juce::TextEditor
 {
 public:
     ToneTraceReadOnlyField(const juce::String& name,
