@@ -116,10 +116,7 @@ void ToneTraceCurveDescriptionField::workerLoop()
             if (job.stage == 1)
                 capture = job.processor->exportableReference();
             else if (job.stage == 2)
-            {
                 capture = job.processor->preMatchTargetCaptureCopy();
-                if (!capture.has_value()) capture = job.processor->exportableTarget();
-            }
         }
 
         juce::String description;
