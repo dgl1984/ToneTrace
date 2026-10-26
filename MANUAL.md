@@ -4,6 +4,8 @@ If you already know how to use an EQ, you already understand the problem Tone Tr
 
 Give it a **Reference**—the sound you want—and a **Target**—the sound you want to correct. Tone Trace learns the tonal relationship between them and builds an EQ correction that moves the Target toward the Reference.
 
+Tone Trace also reports what it has learned at each major phase. Once a Reference is saved, **Curve Description** provides a full objective report of that Reference spectrum. When Correct Target finalizes the Target, the same field reports the Target while the match is being analyzed. Once the match is ready, Curve Description becomes the complete Reference/Target/Correction comparison report. These reports describe measurable spectral shape; they do not decide whether the material is muddy, harsh, good, bad, or otherwise make an artistic judgment for you.
+
 The unusual part is what happens next. Tone Trace does not treat the generated match as a sealed result. The correction remains something you can audition, reshape, narrow to the frequencies that matter, edit like a graphic EQ, or reinterpret with another Match Mode without recording the pair again. Once learned, the correction can remain in a live signal path with zero reported plug-in latency, or be exported as an impulse response for use elsewhere.
 
 This manual starts with the practical workflow. The more technical details are kept for the sections where they help explain a control or behavior rather than being required knowledge up front.
@@ -25,10 +27,10 @@ If a dull microphone should sound more like a brighter microphone, the brighter 
 2. Confirm the **Match Mode**. A new instance starts in **Voice**; choose a
    different mode when the material calls for it.
 3. Choose **Capture Reference** and play the sound you want the Target to resemble.
-4. Choose **Learn Target**. This first saves the Reference, then starts Target capture. In a host generic parameter view, the same step is named **Save Reference and Learn Target**. If you only want to save a reusable Reference, it is ready to export at this point.
+4. Choose **Learn Target**. This first saves the Reference, then starts Target capture. In a host generic parameter view, the same step is named **Save Reference and Learn Target**. **Curve Description** now contains the Reference report. If you only want to inspect or save a reusable Reference, it is available at this point.
 5. Play the sound you want to correct.
-6. Choose **Correct Target** when the Target is usable.
-7. Listen in Preview. Adjust the correction if needed.
+6. Choose **Correct Target** when the Target is usable. While Status says `Analyzing`, **Curve Description** prepares and displays the finalized Target report.
+7. Listen in Preview. When the match is ready, **Curve Description** returns to the complete Reference/Target/Correction comparison report. Adjust the correction if needed.
 8. Choose **Freeze Correction** when you are satisfied.
 
 Freeze ends learning, not editing. You can continue working with the finished correction afterward.
@@ -66,6 +68,8 @@ Tone Trace compares the overall tonal shape of the Reference and Target. It is n
 That is why the two recordings do not need to be sample-aligned. They do, however, need to represent comparable material. If one voice recording contains mostly deep vowels and the other mostly bright consonants, some of that difference belongs to the performance rather than the microphone. The Match Modes help Tone Trace decide how much fine detail to trust for different kinds of material.
 
 Tone Trace also separates **tone** from **level**. A louder Reference does not automatically become a broadband boost. The learned correction describes the tonal shape; **Correction Gain** is the separate control for output level.
+
+The phase reports follow the same rule. Reference and Target reports describe each capture's relative spectral shape using measurable features such as broad rises and falls, peaks or dips, shelves, rolloffs, widths, and tilt. They are analysis reports, not diagnoses. A report can tell you what the spectrum is doing without deciding whether you should change it. That makes Curve Description useful even when your goal is simply to inspect a source rather than apply a match.
 
 After Correct, the retained captures remain useful. Changing Match Mode asks Tone Trace to interpret the same pair differently. Changing Correction Resolution changes the manual editing grid rather than forcing another recording. Limiting Correction Range Low or High stops the effective correction outside the selected part of the spectrum without erasing the learned relationship underneath it.
 
@@ -123,6 +127,8 @@ In the host generic parameter view, **Learn Target** is exposed by its more expl
 
 The four everyday workflow commands—Capture Reference, Learn Target, Correct Target, and Freeze Correction—are available directly in the Windows editor. The host's **Workflow Step** parameter exposes those same actions plus the three Reset actions.
 
+The existing **Curve Description** field follows that workflow without adding another control. After Reference is committed it contains the Reference report. During Correct it contains the finalized Target report as that report becomes available. After the correction is committed it returns to Tone Trace's complete Reference/Target/Correction comparison report.
+
 ### Capture Reference
 
 Choose **Capture Reference**, then play the sound you want the Target to resemble.
@@ -148,6 +154,8 @@ You can stop playback after capturing the Reference while you prepare or load th
 
 Choose **Learn Target** in the editor. This does two things in order: it saves the current Reference, then begins a fresh Target capture. In the host generic parameter view, the same Workflow Step is named **Save Reference and Learn Target**. If you return to Learn Target after Preview or Freeze, Tone Trace keeps the valid Reference and starts a fresh Target capture rather than forcing you to capture the Reference again.
 
+Once the Reference has been saved, **Curve Description** provides its full objective spectrum report. You can read or copy that report while Tone Trace is waiting for or capturing the Target. This is useful even if you do not intend to finish a match: the report can serve as an accessible description of the captured source itself.
+
 Because the Reference is committed first, you can use **Export → Reference Curve (`.tts`)** immediately afterward if your only goal is to create a reusable Reference rather than complete a match.
 
 If the Reference does not yet contain enough accepted material to be usable, the command is rejected, the workflow returns to Reference capture, and the status becomes `Cannot save yet; keep capturing`.
@@ -160,9 +168,11 @@ There is one deliberate fallback: if the mode's **accepted-audio** buffer become
 
 ### Correct Target
 
-Choose **Correct Target**. Tone Trace analyzes the two captures and builds the correction. While this is happening, Status reports `Analyzing`.
+Choose **Correct Target**. Tone Trace finalizes the Target, analyzes the two captures, and builds the correction. While this is happening, Status reports `Analyzing`.
 
-When the model is ready, Status becomes `Preview correction` and the correction is active.
+During this phase, **Curve Description** prepares and displays the full objective Target spectrum report. The report describes the Target on its own terms rather than calling its features boosts or cuts. Boost/cut language remains reserved for the correction Tone Trace actually applies.
+
+When the model is ready, Status becomes `Preview correction` and the correction is active. Curve Description then returns to the complete comparison report containing the Reference, Target, and applied Correction information. The completed-match report retains the same information and terminology as before this feature was added.
 
 If the Target is not usable yet, the command is rejected and Tone Trace returns you to the Target-learning step. A descending warning sweep may accompany the rejection when tone notifications are enabled.
 
@@ -348,11 +358,15 @@ Tone Trace is meant to be fully usable whether you work visually, by keyboard, o
 
 The read-only text box containing the natural-language curve summary has the
 accessible label **Curve Description**. Its displayed text is the value,
-not the control name. Reference and Target descriptions use **higher** and
-**lower** because they describe measured spectral relationships. **Boost** and
-**cut** are reserved for the Correction Tone Trace actually applies. When
-Maximum Correction limits a larger learned move, the description reports both
-the learned and applied values.
+not the control name. The same field now follows the workflow: it reports the
+saved Reference while Target is being learned, reports the finalized Target while
+Correct is analyzing, and returns to the complete Reference/Target/Correction
+comparison when the match is ready. No extra control or focus stop is added.
+Reference and Target descriptions use **higher** and **lower** because they
+describe measured spectral shape. **Boost** and **cut** are reserved for the
+Correction Tone Trace actually applies. When Maximum Correction limits a larger
+learned move, the completed-match description reports both the learned and
+applied values.
 
 The host's generic parameter view exposes the global workflow, matching controls, safety controls, and live status. Correction Resolution is deliberately available there and in the Bands pages. The editor additionally provides the trace-band editor, curve descriptions, Import/Export commands, a compact **Options...** dialog for less-frequently changed controls, and a labeled multiline **Status** panel. Status changes are announced when they matter without turning fast-moving Capture Time and Curve Drift updates into constant screen-reader chatter.
 
@@ -440,11 +454,11 @@ You can also export an IR before learning a match when you have created a curve 
 
 ### Import Reference
 
-Importing a Reference curve establishes the tonal destination and moves Tone Trace to Target learning. Record or import the Target next.
+Importing a Reference curve establishes the tonal destination and moves Tone Trace to Target learning. Record or import the Target next. Curve Description reports the imported Reference in the same objective language used for a live Reference.
 
 ### Import Target
 
-A Target import requires a usable Reference. Once both exist, Tone Trace can analyze the correction.
+A Target import requires a usable Reference. Once both exist, Tone Trace analyzes the correction. During that analysis, Curve Description uses the imported Target for the Target report before returning to the completed comparison report.
 
 ### Import Correction Model
 

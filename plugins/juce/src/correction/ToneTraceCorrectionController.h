@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -71,6 +72,7 @@ public:
     [[nodiscard]] bool hasProfile() const;
     [[nodiscard]] int sampleRate() const noexcept { return sampleRate_; }
     [[nodiscard]] std::unique_ptr<ProfileSnapshot> snapshotCopy() const;
+    [[nodiscard]] std::optional<SpectrumCapture> inProgressTargetCopy() const;
 
     // Audio-thread operation. No lock, allocation, waiting, host call, or UI.
     void process(const float* const* inputs,
@@ -89,10 +91,14 @@ private:
                                                                double confidence = 0.0);
 
     void refreshCachedStateLocked(); // caller owns controlMutex_
+    void clearInProgressTarget();
 
     mutable std::mutex controlMutex_; // never acquired by process()
     mutable std::mutex stateCacheMutex_;
+    mutable std::mutex analysisCaptureMutex_;
     std::string cachedProjectState_ { serializeProjectState(nullptr) };
+    std::optional<SpectrumCapture> inProgressTarget_;
+    bool analysisCaptureActive_ = false; // guarded by analysisCaptureMutex_
     std::unique_ptr<HeadlessPluginCore> core_;
     int sampleRate_ = 0;
     std::size_t channels_ = 0;

@@ -8,6 +8,7 @@
 #include "controls/ToneTraceBandSlider.h"
 #include "controls/ToneTraceChoiceControl.h"
 #include "controls/ToneTraceCommandButton.h"
+#include "controls/ToneTraceCurveDescriptionField.h"
 #include "controls/ToneTraceParameterSlider.h"
 #include "controls/ToneTracePageSelector.h"
 #include "controls/ToneTraceReadOnlyField.h"
@@ -36,6 +37,8 @@ public:
    #endif
 
 private:
+    friend class ToneTraceCurveDescriptionField;
+
     void parameterValueChanged(int parameterIndex, float newValue) override;
     void parameterGestureChanged(int parameterIndex, bool gestureIsStarting) override;
     void handleAsyncUpdate() override;
@@ -74,8 +77,8 @@ private:
     juce::Label subtitle_;
     ToneTracePageSelector pageSelector_;
     ToneTraceGraphSurface graphSurface_;
-    ToneTraceReadOnlyField curveReadout_ { "Curve Readout", "Exact frequency and curve values.", true };
-    ToneTraceReadOnlyField curveDescription_ { "Curve Description", "Reference, Target, and applied correction description.", true };
+    ToneTraceCurveDescriptionField curveReadout_ { "Curve Readout", "Exact frequency and curve values.", true, false };
+    ToneTraceCurveDescriptionField curveDescription_ { "Curve Description", "Reference, Target, and applied correction description.", true, true };
     juce::Label curveDescriptionLabel_;
     juce::ToggleButton traceButton_ { "Trace Curve" };
     juce::TextButton copyDescriptionButton_ { "Copy Curve Description" };

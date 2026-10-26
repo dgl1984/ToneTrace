@@ -3,6 +3,25 @@
 All notable Tone Trace EQ changes are recorded here. Versions follow semantic
 versioning, and release dates use `YYYY-MM-DD`.
 
+## Unreleased
+
+### Added
+
+- **Full reports throughout the capture and matching workflow.** Tone Trace no
+  longer waits for a completed correction before Curve Description becomes
+  useful. After **Learn Target** saves a Reference, the existing field provides
+  a full objective report of that Reference spectrum. After **Correct Target**
+  finalizes a Target, the same field provides a full objective report of the
+  Target while analysis runs. When the match is ready, the field returns to the
+  complete Reference/Target/Correction comparison report.
+- This makes Tone Trace useful as an accessible spectrum-analysis tool at each
+  major phase, not only as a post-match correction reporter. The reports describe
+  measurable spectral structure without judging the material as muddy, harsh,
+  good, bad, or otherwise interpreting artistic intent.
+- The feature adds information without adding UI: there is no new control,
+  label, focus position, layout, matching behavior, or replacement for the
+  existing completed-match report.
+
 ## [1.1.0] - 2026-10-03
 
 Tone Trace EQ 1.1.0 moves to JUCE, a cross-platform foundation that makes future

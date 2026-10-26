@@ -25,11 +25,12 @@ For VST3, copy the entire `plugins\vst3\Tone Trace EQ.vst3` folder to
 plug-ins in the host. The ZIP also contains the user documentation, release notes, licenses, and `docs\BUILD_MANIFEST.txt` with a SHA-256 hash for every packaged file. It contains no installer, developer tools, tests, or debug
 symbols, and it changes nothing until you copy a plug-in.
 
-This package is the JUCE port of the 1.0.5 feature set, using its unchanged matching
-and realtime engine. The CLAP ID and numeric parameter IDs are retained, and the
-port reads 1.0.5 CLAP states. Keep a backup
-before updating projects: states saved by 1.1 are not readable by 1.0.5. VST3
-is a separate host plug-in identity, so existing CLAP instances stay CLAP.
+The Windows JUCE port retains the unchanged 1.0.5 matching and realtime engine,
+while the shared editor and accessibility layer can continue to improve around
+that protected DSP boundary. The CLAP ID and numeric parameter IDs are retained,
+and the port reads 1.0.5 CLAP states. Keep a backup before updating projects:
+states saved by 1.1 are not readable by 1.0.5. VST3 is a separate host plug-in
+identity, so existing CLAP instances stay CLAP.
 
 ## The one rule to remember
 
@@ -47,10 +48,10 @@ If a dull microphone recording should sound more like a brighter microphone, cap
    microphone matching; choose **Full Mix** for complete songs and mixed
    program material.
 3. Choose **Capture Reference** and play the sound you want to match.
-4. Choose **Learn Target**. That button first saves the Reference you just captured, then begins Target capture. If all you wanted was a reusable Reference, it is already available for export at this point.
+4. Choose **Learn Target**. That button first saves the Reference you just captured, then begins Target capture. The existing **Curve Description** field now describes the saved Reference spectrum. If all you wanted was a reusable Reference, it is already available for export at this point.
 5. Play the sound you want to correct.
-6. Choose **Correct Target** when the Target is ready.
-7. Listen. If the broad match is right but you want to shape it further, use the correction controls or the graphic-EQ bands.
+6. Choose **Correct Target** when the Target is ready. While the new match is being analyzed, **Curve Description** describes the finalized Target spectrum.
+7. Listen. When the match is ready, Curve Description returns to Tone Trace's complete Reference/Target/Correction comparison report. If the broad match is right but you want to shape it further, use the correction controls or the graphic-EQ bands.
 8. Choose **Freeze Correction** when you are satisfied.
 
 A match does not become untouchable after Freeze. Tone Trace keeps the captured relationship available, so you can continue refining the correction without starting the capture process over. You also do not need to fill the 30-second standard capture buffer before moving on; that figure is a maximum accepted-audio capacity, not a recommended capture length. Once the Reference is usable, you may stop playback to prepare the Target without losing the Reference.
@@ -91,9 +92,14 @@ Values retain up to three meaningful
 decimal places and use a dB string instead of a percentage range. Host and screen-reader combinations can still expose integration differences, so accessibility feedback is welcome.
 
 With NVDA, band navigation is intentionally concise. The read-only curve text
-is explicitly labeled **Curve Description**. Reference and Target measurements
-use higher/lower wording, while boost/cut is reserved for the Correction Tone
-Trace actually applies. The Capture page has a labeled
+is explicitly labeled **Curve Description**. Once a Reference is saved, that
+existing field describes the Reference spectrum; once Correct finalizes a
+Target, it describes the Target while the replacement match is being analyzed.
+After the match is ready, the field returns to the complete comparison and
+correction report. No control, label, focus position, or GUI layout changes for
+these stages. Reference and Target measurements use higher/lower wording and
+remain descriptive rather than evaluative; boost/cut is reserved for the
+Correction Tone Trace actually applies. The Capture page has a labeled
 multiline **Status** field plus an **Options...** button for less-frequently
 changed controls. Global controls and the single persistent **Workflow Step**
 remain available through the host's generic parameter interface, including
@@ -201,12 +207,12 @@ distributing a derivative must meet the applicable JUCE terms themselves.
 
 ## Acknowledgements
 
-
 Tone Trace was inspired by **[Spectrum Matcher](https://geraintluff.github.io/jsfx/)**, a REAPER JSFX by **Geraint Luff** that analyzes the spectral difference between an input and a reference and can apply an EQ correction from that comparison. Using Spectrum Matcher planted the seed for Tone Trace’s original match-EQ concept. Tone Trace later grew in its own direction because I wanted a more accessible capture workflow, an editable correction model, and tools for importing/exporting curves created by Tone Trace.
 
 Development also benefited from studying **Surge XT** and other mature open-source audio projects. Surge was especially useful as a practical reference for where JUCE already provides solid behavior, where accessibility or host integration needs explicit attention, and where our own early solutions were becoming more complicated than they needed to be. That kind of open source visibility helped Tone Trace, and it is one reason the project's own accessibility and regression-testing infrastructure is kept readable for other developers to study and adapt.
 
-Finally, f a program does more than say “Hello, world!” and/or looks well-designed visually, every line responsible for such elevated standards was coded by AI—but the design is mine.
+Finally, if a program does more than say “Hello, world!” and/or looks well-designed visually, every line responsible for such elevated standards was coded by AI—but the design is mine.
+
 ## Contact and support
 
 Questions, bug reports, accessibility feedback, and commercial software licensing: `info@lanesaudio.com`
