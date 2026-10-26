@@ -26,6 +26,8 @@ MatchSettings CorrectionController::makeMatchSettings(const CorrectionSettings& 
 {
     MatchSettings match;
     match.mode = settings.mode;
+    // Released 1.0.5 captures/retains the full analysis range. Low/High are a
+    // render mask and therefore live in IrRenderSettings below.
     match.rangeLowHz = 10.0;
     match.rangeHighHz = 30000.0;
     match.resolution = std::clamp(settings.resolution, 1, 120);
@@ -41,6 +43,11 @@ IrRenderSettings CorrectionController::makeRenderSettings(const CorrectionSettin
     render.sampleRate = sampleRate_;
     render.correctionStrength = settings.correctionStrength;
     render.correctionSharpness = settings.correctionSharpness;
+    // Product Foundation 01a/Candidate C already proved Correction Gain as one
+    // separate 20 ms JUCE output-trim stage. Keep that single ownership path;
+    // the learned profile is rendered at 0 dB global gain and the JUCE stage is
+    // applied afterwards. Static transfer therefore matches released 1.0.5
+    // without creating two owners for the same parameter.
     render.correctionGainDb = 0.0;
     render.rangeLowHz = settings.rangeLowHz;
     render.rangeHighHz = settings.rangeHighHz;
@@ -332,7 +339,7 @@ void CorrectionController::process(const float* const* inputs,
                                    std::size_t frames) noexcept
 {
     auto* core = core_.get();
-    if (core_ == nullptr) return;
+    if (core == nullptr) return;
     core->process(inputs, outputs, channelCount, frames);
 }
 
