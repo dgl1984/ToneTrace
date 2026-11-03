@@ -78,6 +78,21 @@ ctest --preset linux-release --output-on-failure
 
 ## Release acceptance
 
-Automated tests do not replace pluginval/clap-validator, real-host listening,
-project save/reload, duplicate/moved instance checks, offline render checks, or
-screen-reader acceptance. See `RELEASING.md` and `plugins/README.md`.
+Windows CI runs pluginval 1.0.4 at strictness 7 (seed 42712, including GUI tests)
+and clap-validator 0.4.1 build 152b982 against the staged VST3 and CLAP. Downloads
+are pinned by URL and SHA-256. Both validators run even if the other fails, and
+their output and invocation records are uploaded as `windows-validator-reports`.
+Crashes, timeouts, failed tests, and unexpected warnings fail CI. The CLAP denormal
+timing warning remains visible in the logs and job summary but is advisory on
+shared runners. Unsupported-feature skips are reported. Validation is serial.
+
+To run the same checks against a local staged package, use PowerShell:
+
+```powershell
+./tools/validate_windows_package.ps1 -Validator pluginval -StageDirectory dist/ToneTrace_EQ_1.2.0_Windows_x64
+./tools/validate_windows_package.ps1 -Validator clap-validator -StageDirectory dist/ToneTrace_EQ_1.2.0_Windows_x64
+```
+
+Complete real-host listening, project save/reload, duplicate/moved instance checks,
+offline render checks, and screen-reader acceptance for a release. See
+`RELEASING.md` and `plugins/README.md`.
