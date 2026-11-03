@@ -35,6 +35,24 @@ struct ReleasedParameterSpec
     ParameterKind kind;
 };
 
+// The historical catalog below records the released contract. The JUCE port's
+// current automation capability is narrower: only callback-consumed parameters
+// can follow an audio timeline. IDs and state values are independent of this flag.
+[[nodiscard]] constexpr bool supportsRealtimeAutomation(const ReleasedParameterSpec& spec) noexcept
+{
+    switch (spec.releasedNumericId)
+    {
+        case 180: // output gain
+        case 240: // notification enable
+        case 250: // notification level
+        case 260: // bypass
+        case 270: // output clip guard
+            return true;
+        default:
+            return false;
+    }
+}
+
 // Authoritative Tone Trace 1.0.5 host contract, commit
 // 24462d9d80d9df23048f528bd81e8d8573397724. Numeric identifiers are retained
 // as product identities even though JUCE owns the VST3 wrapper's native IDs.

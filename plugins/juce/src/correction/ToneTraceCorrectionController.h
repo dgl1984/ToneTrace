@@ -3,8 +3,11 @@
 #include "tonetrace/tonetrace_realtime.h"
 
 #include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -29,6 +32,8 @@ struct CorrectionResult
     ProfileIssue issue = ProfileIssue::NoUsableProfile;
     std::string message;
     double confidence = 0.0;
+    // Tail of this accepted rebuild, derived from its validated render settings.
+    double committedTailSeconds = 0.0;
 };
 
 // Format-neutral ownership seam between the JUCE wrapper and the released
@@ -54,10 +59,19 @@ public:
                              const CaptureDiagnostics& targetDiagnostics,
                              const CorrectionSettings& settings,
                              const SpectrumCapture* importedReference = nullptr,
-                             const SpectrumCapture* importedTarget = nullptr);
+                             const SpectrumCapture* importedTarget = nullptr,
+                             // Checked immediately before the candidate is committed.
+                             // A superseded job must not install its stale profile.
+                             const std::function<bool()>& isCancelled = {},
+                             // Identifies this analysis to report readers so a
+                             // superseded job's in-progress Target cannot leak
+                             // into a newer analysis report.
+                             std::uint64_t reportToken = 0);
 
-    CorrectionResult rebuild(const CorrectionSettings& settings);
-    CorrectionResult commitManualCorrection(const CorrectionSettings& settings);
+    CorrectionResult rebuild(const CorrectionSettings& settings,
+                             const std::function<bool()>& isCancelled = {});
+    CorrectionResult commitManualCorrection(const CorrectionSettings& settings,
+                                            const std::function<bool()>& isCancelled = {});
     CorrectionResult commitSnapshot(const ProfileSnapshot& snapshot);
     CorrectionResult reset();
 
@@ -71,6 +85,8 @@ public:
     [[nodiscard]] bool hasProfile() const;
     [[nodiscard]] int sampleRate() const noexcept { return sampleRate_; }
     [[nodiscard]] std::unique_ptr<ProfileSnapshot> snapshotCopy() const;
+    [[nodiscard]] std::optional<SpectrumCapture> inProgressTargetCopy(
+        std::uint64_t reportToken = 0) const;
 
     // Audio-thread operation. No lock, allocation, waiting, host call, or UI.
     void process(const float* const* inputs,
@@ -89,10 +105,20 @@ private:
                                                                double confidence = 0.0);
 
     void refreshCachedStateLocked(); // caller owns controlMutex_
+    void clearInProgressTarget();
 
     mutable std::mutex controlMutex_; // never acquired by process()
     mutable std::mutex stateCacheMutex_;
+    mutable std::mutex analysisCaptureMutex_;
     std::string cachedProjectState_ { serializeProjectState(nullptr) };
+    // Mirrors the last committed core snapshot under stateCacheMutex_. Readers on
+    // the message thread copy this instead of waiting for a long analysis to
+    // release controlMutex_.
+    std::unique_ptr<ProfileSnapshot> cachedSnapshot_;
+    bool cachedHasProfile_ = false;
+    std::optional<SpectrumCapture> inProgressTarget_;
+    std::uint64_t analysisReportToken_ = 0; // guarded by analysisCaptureMutex_
+    bool analysisCaptureActive_ = false; // guarded by analysisCaptureMutex_
     std::unique_ptr<HeadlessPluginCore> core_;
     int sampleRate_ = 0;
     std::size_t channels_ = 0;

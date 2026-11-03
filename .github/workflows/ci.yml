@@ -13,12 +13,18 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Verify release notes encoding
+        shell: pwsh
+        run: ./tools/verify_release_notes.ps1
       - name: Configure
         run: cmake --preset windows-release
       - name: Build
         run: cmake --build --preset windows-release --parallel
       - name: Test
-        run: ctest --preset windows-release
+        run: ctest --preset windows-release --output-on-failure
+      - name: Verify source contracts
+        shell: pwsh
+        run: ./plugins/juce/tests/SourceContractTests.ps1
       - name: Read release version
         shell: pwsh
         run: |
@@ -42,6 +48,10 @@ jobs:
             "-DPROJECT_VERSION=$env:TONETRACE_VERSION" `
             -P cmake/write_build_manifest.cmake
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake "-DSTAGE_DIR=$stage" `
+            "-DPROJECT_VERSION=$env:TONETRACE_VERSION" `
+            -P cmake/verify_package.cmake
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Push-Location dist
           cmake -E tar cf "$env:TONETRACE_PACKAGE.zip" --format=zip `
             $env:TONETRACE_PACKAGE
@@ -50,11 +60,19 @@ jobs:
           if ($archiveResult -ne 0) { exit $archiveResult }
           cmake -E tar tf "dist/$env:TONETRACE_PACKAGE.zip"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $hash = (Get-FileHash -LiteralPath `
+            "dist/$env:TONETRACE_PACKAGE.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $env:TONETRACE_PACKAGE.zip" | Set-Content `
+            "dist/$env:TONETRACE_PACKAGE.zip.sha256" -Encoding ascii
+          "ZIP SHA-256: $hash"
+          "### Windows package`n`nSHA-256: ``$hash``" >> $env:GITHUB_STEP_SUMMARY
       - name: Upload Windows release package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ env.TONETRACE_PACKAGE }}
-          path: dist/${{ env.TONETRACE_PACKAGE }}.zip
+          path: |
+            dist/${{ env.TONETRACE_PACKAGE }}.zip
+            dist/${{ env.TONETRACE_PACKAGE }}.zip.sha256
           if-no-files-found: error
 
   linux:
@@ -62,9 +80,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Verify source contracts
+        shell: pwsh
+        run: ./plugins/juce/tests/SourceContractTests.ps1
       - name: Configure
         run: cmake --preset linux-release
       - name: Build
         run: cmake --build --preset linux-release --parallel
       - name: Test
-        run: ctest --preset linux-release
+        run: ctest --preset linux-release --output-on-failure

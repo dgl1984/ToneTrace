@@ -1,7 +1,37 @@
 # Changelog
 
-All notable Tone Trace EQ changes are recorded here. Versions follow semantic
-versioning, and release dates use `YYYY-MM-DD`.
+Changes to Tone Trace EQ, with the newest first.
+
+## [1.2]
+
+Tone Trace 1.2 makes the editor easier to read and navigate, brings spectrum reports into the capture workflow, and reduces unnecessary work while the plug-in is open. The matching engine is unchanged.
+
+### Capture and reports
+
+- **Curve Description** can report a usable Reference before you start the Target. During correction analysis it can also show the Target report, then the full comparison when the match is ready. Reports are prepared in the background and describe spectral shape without making judgments about how the recording sounds.
+- A full capture stops accepting and processing new capture audio. This fixes repeated fragments and periodic CPU spikes after Capture Full.
+- Reports refresh after imports and completed corrections. A failed report says it is unavailable instead of remaining on “being prepared.”
+- Restarting capture, resetting, restoring a project, or importing a curve prevents an unfinished older analysis from replacing the new result.
+- Pressing the current workflow button again restarts that step. A failed live Reference export reports the failure instead of silently exporting an older Reference.
+
+### Editor and accessibility
+
+- The graph has frequency and dB axes, a legend, and a dashed Target curve. **Correction + gain** includes the output trim in both the graph and readout. Reference and Target levels are shown relative to their own averages.
+- The editor fits down to 720 × 640. Band pages adapt to the available width, Bypass remains visible across pages, and ready workflow actions are emphasized.
+- Spoken announcements go through the screen reader's accessibility system. Tone Trace does not use a separate Windows SAPI voice.
+- The README and manual now follow the working order: introduction, capture, adjustment, and the advice needed for each task. Keyboard and graph descriptions match the current controls.
+
+### Reliability and efficiency
+
+- Fixed a crash when the host changed parameters while a correction was completing. The plug-in now takes the tail duration from the correction it actually committed, without rendering a second IR to measure it.
+- Background reports can copy accepted audio while capture continues. Capture storage is allocated when needed, and unchanged graphs and reports are reused.
+- Restoring a project releases the busy state if an error occurs. Imported curves and models are checked against project-state limits before acceptance.
+- Manual-only EQ reports its active filter tail to the host. This does not add plug-in latency.
+- Build checks verify the matching engine against the released source, pin the JUCE dependency, and verify package hashes.
+
+### Automation compatibility
+
+Correction Gain, Emergency Clip Guard, notification level and enable, and Bypass remain automatable. Matching settings and workflow commands require background work and are no longer advertised as automatable. Their saved values and parameter IDs remain unchanged. Existing automation lanes for those controls may behave differently; use static settings and wait for analysis to finish before offline rendering. See the manual for the complete list.
 
 ## [1.1.0] - 2026-10-03
 

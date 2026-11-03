@@ -1,4 +1,5 @@
 #include "ToneTraceReadOnlyField.h"
+#include "platform/ToneTraceAnnouncements.h"
 
 ToneTraceReadOnlyField::ToneTraceReadOnlyField(const juce::String& name,
                                                const juce::String& description,
@@ -27,6 +28,6 @@ void ToneTraceReadOnlyField::setContent(
     if (announce && text.isNotEmpty() && text != lastAnnouncement_)
     {
         lastAnnouncement_ = text;
-        juce::AccessibilityHandler::postAnnouncement(text, priority);
+        tonetrace::platform::announce(*this, text, priority);
     }
 }

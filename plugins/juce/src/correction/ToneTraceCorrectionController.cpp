@@ -55,11 +55,20 @@ IrRenderSettings CorrectionController::makeRenderSettings(const CorrectionSettin
     return render;
 }
 
+void CorrectionController::clearInProgressTarget()
+{
+    const std::lock_guard<std::mutex> lock(analysisCaptureMutex_);
+    analysisCaptureActive_ = false;
+    analysisReportToken_ = 0;
+    inProgressTarget_.reset();
+}
+
 CorrectionResult CorrectionController::prepare(int sampleRate, std::size_t channels)
 {
     if (sampleRate < 8000 || sampleRate > 768000 || channels == 0 || channels > 2)
         return failure(ProfileIssue::InvalidModel, "Invalid realtime configuration");
 
+    clearInProgressTarget();
     const std::lock_guard<std::mutex> lock(controlMutex_);
     if (core_ != nullptr && sampleRate_ == sampleRate && channels_ == channels)
         return { true, ProfileIssue::None, "Realtime core already prepared", 0.0 };
@@ -104,20 +113,54 @@ CorrectionResult CorrectionController::analyze(const AudioBuffer& referenceAudio
                                                 const CaptureDiagnostics& targetDiagnostics,
                                                 const CorrectionSettings& settings,
                                                 const SpectrumCapture* importedReference,
-                                                const SpectrumCapture* importedTarget)
+                                                const SpectrumCapture* importedTarget,
+                                                const std::function<bool()>& isCancelled,
+                                                std::uint64_t reportToken)
 {
+    clearInProgressTarget();
     const std::lock_guard<std::mutex> lock(controlMutex_);
     if (core_ == nullptr || sampleRate_ <= 0)
         return failure(ProfileIssue::RendererBusy, "Realtime core is not prepared");
+
+    {
+        const std::lock_guard<std::mutex> captureLock(analysisCaptureMutex_);
+        analysisCaptureActive_ = true;
+        analysisReportToken_ = reportToken;
+    }
+
+    const auto finishReportWindow = [this]
+    {
+        const std::lock_guard<std::mutex> captureLock(analysisCaptureMutex_);
+        analysisCaptureActive_ = false;
+    };
 
     try
     {
         MatchEngine engine;
         const auto uncapped = makeMatchSettings(settings, true);
+
+        // Target is computed first so its report is available while Reference
+        // analysis and matching continue. If Target capture itself fails, defer
+        // that exception until Reference has been checked so released Reference-
+        // first validation/error precedence remains unchanged.
+        std::optional<SpectrumCapture> targetCapture;
+        std::exception_ptr targetFailure;
+        try
+        {
+            targetCapture = importedTarget != nullptr
+                ? *importedTarget : engine.capture(targetAudio, uncapped);
+            const std::lock_guard<std::mutex> captureLock(analysisCaptureMutex_);
+            inProgressTarget_ = *targetCapture;
+        }
+        catch (...)
+        {
+            targetFailure = std::current_exception();
+        }
+
         const auto reference = importedReference != nullptr
             ? *importedReference : engine.capture(referenceAudio, uncapped);
-        const auto target = importedTarget != nullptr
-            ? *importedTarget : engine.capture(targetAudio, uncapped);
+        if (targetFailure != nullptr) std::rethrow_exception(targetFailure);
+        const auto target = std::move(*targetCapture);
         auto model = engine.match(reference, target, uncapped);
 
         ProfileSnapshot candidate;
@@ -129,19 +172,30 @@ CorrectionResult CorrectionController::analyze(const AudioBuffer& referenceAudio
         candidate.referenceDiagnostics = referenceDiagnostics;
         candidate.targetDiagnostics = targetDiagnostics;
 
+        if (isCancelled && isCancelled())
+        {
+            finishReportWindow();
+            return failure(ProfileIssue::RendererBusy, "Analysis was superseded");
+        }
+
         const auto validation = core_->commitCandidate(candidate);
         if (validation.accepted) refreshCachedStateLocked();
         const auto confidence = std::min(reference.confidence, target.confidence);
+        finishReportWindow();
         return resultFromValidation(validation, confidence);
     }
     catch (const std::exception& error)
     {
+        finishReportWindow();
         return failure(ProfileIssue::InvalidCapture, error.what());
     }
 }
 
-CorrectionResult CorrectionController::rebuild(const CorrectionSettings& settings)
+CorrectionResult CorrectionController::rebuild(
+    const CorrectionSettings& settings,
+    const std::function<bool()>& isCancelled)
 {
+    clearInProgressTarget();
     const std::lock_guard<std::mutex> lock(controlMutex_);
     if (core_ == nullptr)
         return failure(ProfileIssue::RendererBusy, "Realtime core is not prepared");
@@ -168,10 +222,15 @@ CorrectionResult CorrectionController::rebuild(const CorrectionSettings& setting
         candidate.uncappedModel.resolution = requestedAudible.resolution;
         candidate.renderSettings = makeRenderSettings(settings);
 
+        if (isCancelled && isCancelled())
+            return failure(ProfileIssue::RendererBusy, "Rebuild was superseded");
+
         const auto validation = core_->commitCandidate(candidate);
         if (validation.accepted) refreshCachedStateLocked();
-        return resultFromValidation(validation,
+        auto result = resultFromValidation(validation,
             std::min(candidate.reference.confidence, candidate.target.confidence));
+        if (result.accepted) result.committedTailSeconds = candidate.renderSettings.durationSeconds;
+        return result;
     }
     catch (const std::exception& error)
     {
@@ -179,8 +238,11 @@ CorrectionResult CorrectionController::rebuild(const CorrectionSettings& setting
     }
 }
 
-CorrectionResult CorrectionController::commitManualCorrection(const CorrectionSettings& settings)
+CorrectionResult CorrectionController::commitManualCorrection(
+    const CorrectionSettings& settings,
+    const std::function<bool()>& isCancelled)
 {
+    clearInProgressTarget();
     const std::lock_guard<std::mutex> lock(controlMutex_);
     if (core_ == nullptr)
         return failure(ProfileIssue::RendererBusy, "Realtime core is not prepared");
@@ -188,9 +250,19 @@ CorrectionResult CorrectionController::commitManualCorrection(const CorrectionSe
     try
     {
         auto render = makeRenderSettings(settings);
+        if (isCancelled && isCancelled())
+            return failure(ProfileIssue::RendererBusy, "Manual correction was superseded");
         const auto validation = core_->commitManualCorrection(render);
         if (validation.accepted) refreshCachedStateLocked();
-        return resultFromValidation(validation);
+        auto result = resultFromValidation(validation);
+        if (result.accepted && hasManualCorrection(render))
+        {
+            // Released renderMinimumPhaseIr rounds to whole samples, minimum 64.
+            // Read only the settings just committed; never render again for metadata.
+            result.committedTailSeconds = std::max(64.0,
+                std::ceil(render.durationSeconds * render.sampleRate)) / render.sampleRate;
+        }
+        return result;
     }
     catch (const std::exception& error)
     {
@@ -200,6 +272,7 @@ CorrectionResult CorrectionController::commitManualCorrection(const CorrectionSe
 
 CorrectionResult CorrectionController::commitSnapshot(const ProfileSnapshot& snapshot)
 {
+    clearInProgressTarget();
     const std::lock_guard<std::mutex> lock(controlMutex_);
     if (core_ == nullptr)
         return failure(ProfileIssue::RendererBusy, "Realtime core is not prepared");
@@ -221,6 +294,7 @@ CorrectionResult CorrectionController::commitSnapshot(const ProfileSnapshot& sna
 
 CorrectionResult CorrectionController::reset()
 {
+    clearInProgressTarget();
     const std::lock_guard<std::mutex> lock(controlMutex_);
     if (core_ == nullptr)
     {
@@ -242,6 +316,7 @@ CorrectionResult CorrectionController::reset()
 
 CorrectionResult CorrectionController::restoreProjectState(const std::string& bytes)
 {
+    clearInProgressTarget();
     RestoredProjectState restored;
     try
     {
@@ -288,21 +363,38 @@ void CorrectionController::refreshCachedStateLocked()
 {
     const auto state = core_ != nullptr ? core_->saveProjectState()
                                         : serializeProjectState(nullptr);
+    std::unique_ptr<ProfileSnapshot> snapshot;
+    if (core_ != nullptr)
+    {
+        if (const auto* frozen = core_->frozenSnapshot(); frozen != nullptr)
+            snapshot = std::make_unique<ProfileSnapshot>(*frozen);
+    }
+
     const std::lock_guard<std::mutex> cacheLock(stateCacheMutex_);
     cachedProjectState_ = state;
+    cachedSnapshot_ = std::move(snapshot);
+    cachedHasProfile_ = cachedSnapshot_ != nullptr;
 }
 
 bool CorrectionController::hasProfile() const
 {
-    const std::lock_guard<std::mutex> lock(controlMutex_);
-    return core_ != nullptr && core_->frozenSnapshot() != nullptr;
+    const std::lock_guard<std::mutex> cacheLock(stateCacheMutex_);
+    return cachedHasProfile_;
 }
 
 std::unique_ptr<ProfileSnapshot> CorrectionController::snapshotCopy() const
 {
-    const std::lock_guard<std::mutex> lock(controlMutex_);
-    if (core_ == nullptr || core_->frozenSnapshot() == nullptr) return {};
-    return std::make_unique<ProfileSnapshot>(*core_->frozenSnapshot());
+    const std::lock_guard<std::mutex> cacheLock(stateCacheMutex_);
+    if (cachedSnapshot_ == nullptr) return {};
+    return std::make_unique<ProfileSnapshot>(*cachedSnapshot_);
+}
+
+std::optional<SpectrumCapture> CorrectionController::inProgressTargetCopy(
+    std::uint64_t reportToken) const
+{
+    const std::lock_guard<std::mutex> lock(analysisCaptureMutex_);
+    return analysisCaptureActive_ && analysisReportToken_ == reportToken
+        ? inProgressTarget_ : std::nullopt;
 }
 
 void CorrectionController::resetAudio() noexcept

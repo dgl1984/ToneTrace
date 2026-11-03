@@ -5,10 +5,15 @@ file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" TONETRACE_VERSION
 if(NOT TONETRACE_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
   message(FATAL_ERROR "VERSION must contain one semantic version such as 1.0.0")
 endif()
+# Incremental developer builds must relabel artefacts when VERSION changes;
+# without this dependency CMake keeps the previous version in the plug-in
+# metadata until some other CMake input changes.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 
 project(ToneTrace
   VERSION ${TONETRACE_VERSION}
-  DESCRIPTION "Independent Tone Trace matching engine and plug-in project"
+  DESCRIPTION "Tone Trace matching engine and shared JUCE plug-in project"
   LANGUAGES CXX)
 
 include(CTest)
@@ -16,7 +21,7 @@ include(GNUInstallDirs)
 
 option(TONETRACE_BUILD_TOOLS "Build Tone Trace command-line and evaluation tools" ON)
 option(TONETRACE_BUILD_TESTS "Build Tone Trace automated tests" ON)
-option(TONETRACE_BUILD_PLUGINS "Build every plug-in wrapper present under plugins" ON)
+option(TONETRACE_BUILD_PLUGINS "Build the shared JUCE plug-in implementation" ON)
 option(TONETRACE_STATIC_MSVC_RUNTIME
        "Use the static MSVC runtime so portable Windows builds need no redist" ON)
 
@@ -111,23 +116,13 @@ if(TONETRACE_BUILD_TESTS)
     add_test(NAME tonetrace-ui-layout COMMAND tonetrace-ui-layout-tests)
   endif()
 
-  add_executable(tonetrace-band-value-tests tests/test_band_value.cpp)
-  target_include_directories(tonetrace-band-value-tests PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/plugins/clap")
-  target_compile_features(tonetrace-band-value-tests PRIVATE cxx_std_20)
-  tonetrace_enable_warnings(tonetrace-band-value-tests)
-  install(TARGETS tonetrace-band-value-tests
-    RUNTIME DESTINATION diagnostics COMPONENT Development)
-  if(BUILD_TESTING)
-    add_test(NAME tonetrace-band-value COMMAND tonetrace-band-value-tests)
-  endif()
 endif()
 
 if(TONETRACE_BUILD_PLUGINS)
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/plugins/CMakeLists.txt")
     add_subdirectory(plugins)
   else()
-    message(STATUS "No plug-in wrapper tree is present yet; building engine and tools")
+    message(STATUS "No plug-in implementation is present; building engine and tools")
   endif()
 endif()
 
@@ -136,7 +131,19 @@ install(FILES
     MANUAL.md
     CHANGELOG.md
     RELEASE_NOTES.md
+    DESIGN.md
+    GUI_DESIGN.md
+    RELEASING.md
+    CONTRIBUTING.md
+    SECURITY.md
   DESTINATION docs
+  COMPONENT Release)
+
+# The package README links to plugins/README.md; keep that relative path valid
+# inside docs/ so the shipped documentation is self-contained.
+install(FILES
+    plugins/README.md
+  DESTINATION docs/plugins
   COMPONENT Release)
 
 install(FILES
@@ -147,7 +154,3 @@ install(FILES
 # Keep the user documentation self-contained inside the portable package.
 install(FILES LICENSE DESTINATION docs COMPONENT Release)
 
-install(FILES
-    third_party/clap/LICENSE
-  DESTINATION licenses/clap
-  COMPONENT Release)

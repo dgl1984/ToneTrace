@@ -36,6 +36,7 @@ struct ToneTraceBandDisplayState
 };
 
 class ToneTraceProcessor final : public juce::AudioProcessor,
+                                 public juce::ChangeBroadcaster,
                                  private juce::Timer
 {
 public:
@@ -112,8 +113,22 @@ public:
     [[nodiscard]] double captureSeconds() const noexcept;
     [[nodiscard]] double captureConfidence() const noexcept;
     [[nodiscard]] double curveDriftDb() const noexcept;
+    [[nodiscard]] bool referenceReady() const noexcept { return referenceReady_.load(std::memory_order_acquire); }
     [[nodiscard]] bool captureActive() const noexcept;
+    [[nodiscard]] bool targetReady() const noexcept { return targetCorrectable_.load(std::memory_order_acquire); }
+    [[nodiscard]] std::size_t captureStorageBytes() const noexcept
+    {
+        return captureCapacityFrames_.load(std::memory_order_acquire) * 4 * sizeof(float);
+    }
+    [[nodiscard]] bool analysisBusy() const noexcept { return analysisBusy_.load(std::memory_order_acquire); }
     [[nodiscard]] bool profileActive() const noexcept { return hasProfile_.load(std::memory_order_acquire); }
+    // Increments whenever spectra visible to the pre-match reports change. The
+    // editor uses it to refresh those reports for repeated same-kind imports
+    // without recomputing them on every unrelated parameter update.
+    [[nodiscard]] std::uint64_t reportRevision() const noexcept
+    {
+        return reportRevision_.load(std::memory_order_acquire);
+    }
     [[nodiscard]] juce::String statusSummary() const;
 
     // Product-state access used by the editor. These are snapshots/copies; the
@@ -123,6 +138,7 @@ public:
     [[nodiscard]] double graphMaximumCorrectionDb() const noexcept;
     [[nodiscard]] std::optional<tonetrace::SpectrumCapture> exportableReference() const;
     [[nodiscard]] std::optional<tonetrace::SpectrumCapture> exportableTarget() const;
+    [[nodiscard]] std::optional<tonetrace::SpectrumCapture> preMatchTargetCaptureCopy() const;
     [[nodiscard]] std::optional<tonetrace::AudioBuffer> exportableImpulseResponse() const;
     [[nodiscard]] std::vector<double> manualGainsCopy() const;
     [[nodiscard]] int bandCount() const noexcept;
@@ -188,6 +204,7 @@ private:
     void resetWorkflowToReadyForStateLoad();
     void applyRestoredFrozenWorkflow(double confidence);
     void setStatus(tonetrace::capture::Status status) noexcept;
+    void bumpReportRevision() noexcept;
     void publishTelemetryParameters();
     void publishParameter(juce::AudioParameterFloat& parameter, double actualValue);
     void setWorkflowStepFromEngine(int step);
@@ -253,6 +270,10 @@ private:
     tonetrace::capture::CaptureBuffer targetCapture_;
     mutable std::mutex captureControlMutex_; // never acquired by processBlock
     std::atomic<unsigned int> captureWriterCount_ { 0 };
+    // Readers pin storage against reset, not append. A published prefix contains
+    // only completed samples and is immutable until the next capture reset.
+    mutable std::atomic<unsigned int> captureReaderCount_ { 0 };
+    std::atomic<std::uint64_t> referencePublishedPrefix_ { 0 }; // frames << 2 | channels
     std::atomic<int> captureSampleRate_ { 0 };
     std::atomic<std::size_t> captureCapacityFrames_ { 0 };
 
@@ -294,6 +315,8 @@ private:
     std::atomic<bool> analysisBusy_ { false };
     std::atomic<bool> stateRestoreBusy_ { false };
     std::atomic<std::uint64_t> analysisEpoch_ { 1 };
+    std::atomic<std::uint64_t> reportRevision_ { 1 };
+    std::uint64_t publishedReportRevision_ = 0; // message thread only
 
     // Message-thread observation used to coalesce profile rebuilds when retained
     // captures are reinterpreted after Correct/Freeze.

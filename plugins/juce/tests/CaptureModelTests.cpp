@@ -140,6 +140,20 @@ int main()
     check(tiny.overflowed, "capture must report full rather than writing beyond preallocated capacity");
     check(tiny.frames <= tiny.capacityFrames, "capture must never exceed its preallocated capacity");
 
+    // A full capture is terminal. Continuing to run the monitor filter bank and
+    // confidence estimate after the window fills wastes audio-thread CPU and can
+    // retrigger confidence notifications indefinitely.
+    const auto fullFrames = tiny.frames;
+    const auto fullConfidence = tiny.confidenceLevel;
+    const auto fullStability = tiny.stability;
+    const auto fullReceived = tiny.receivedFrames;
+    appendMono(tiny, tooLong, 48000, tc::MatchMode::FullMix, 64);
+    check(tiny.frames == fullFrames, "full capture accepted more frames after overflow");
+    check(tiny.confidenceLevel == fullConfidence && tiny.stability == fullStability,
+          "full capture kept recomputing confidence/stability after overflow");
+    check(tiny.receivedFrames == fullReceived,
+          "full capture kept doing monitor work after overflow");
+
     tc::CaptureDiagnostics diagnostics;
     std::array<float, 4> contaminated { 0.2F, 1.0F,
         std::numeric_limits<float>::quiet_NaN(), -0.5F };

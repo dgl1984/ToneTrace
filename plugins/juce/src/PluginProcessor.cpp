@@ -12,6 +12,32 @@
 
 namespace
 {
+// Control-thread readers hold captureControlMutex_ to exclude storage changes.
+// The pin additionally defers audio-thread resets; appends beyond a published
+// prefix remain allowed, so report generation never drops captured blocks.
+class CaptureReadGuard final
+{
+public:
+    CaptureReadGuard(std::atomic<unsigned int>& readers,
+                     const std::atomic<unsigned int>& writers) : readers_(readers)
+    {
+        readers_.fetch_add(1, std::memory_order_seq_cst);
+        while (writers.load(std::memory_order_seq_cst) != 0)
+            std::this_thread::yield();
+    }
+    ~CaptureReadGuard() { readers_.fetch_sub(1, std::memory_order_seq_cst); }
+    CaptureReadGuard(const CaptureReadGuard&) = delete;
+    CaptureReadGuard& operator=(const CaptureReadGuard&) = delete;
+private:
+    std::atomic<unsigned int>& readers_;
+};
+
+// The released project-state reader accepts at most 100000 points per capture
+// and at most 120 persisted manual bands. Keep imports inside those bounds so a
+// successfully imported curve can always be saved and reopened.
+constexpr std::size_t kMaximumPersistedCapturePoints = 100000;
+constexpr int kMaximumPersistedBands = 120;
+
 const tonetrace::product::ReleasedParameterSpec& released(unsigned int id)
 {
     const auto* spec = tonetrace::product::findReleasedParameterById(id);
@@ -76,7 +102,10 @@ ToneTraceProcessor::ToneTraceProcessor()
     {
         const auto* control = &kImplementedContinuousControls[index];
         const auto* parameterSpec = control->parameter;
+        // Kernel-design controls are asynchronous setup, not timeline automation.
+        // Keep their IDs and values in state and the host's generic parameter UI.
         auto attributes = juce::AudioParameterFloatAttributes()
+            .withAutomatable(supportsRealtimeAutomation(*parameterSpec))
             .withLabel(parameterSpec->unit)
             .withStringFromValueFunction([control](float value, int)
             {
@@ -114,7 +143,7 @@ ToneTraceProcessor::ToneTraceProcessor()
         kImplementedMatchMode.parameter->name,
         matchModeChoices,
         kImplementedMatchMode.defaultIndex,
-        juce::AudioParameterChoiceAttributes {});
+        juce::AudioParameterChoiceAttributes {}.withAutomatable(supportsRealtimeAutomation(*kImplementedMatchMode.parameter)));
     addParameter(matchMode_);
     stateParameters_.push_back({ juce::Identifier(kImplementedMatchMode.parameter->key), matchMode_ });
 
@@ -124,7 +153,8 @@ ToneTraceProcessor::ToneTraceProcessor()
         auto* parameter = new juce::AudioParameterBool(
             juce::ParameterID { spec->key, 1 },
             spec->name,
-            spec->defaultValue >= 0.5);
+            spec->defaultValue >= 0.5,
+            juce::AudioParameterBoolAttributes {}.withAutomatable(supportsRealtimeAutomation(*spec)));
         addParameter(parameter);
         toggleParameters_[index] = parameter;
         stateParameters_.push_back({ juce::Identifier(spec->key), parameter });
@@ -132,6 +162,7 @@ ToneTraceProcessor::ToneTraceProcessor()
 
     const auto& workflowSpec = released(100);
     auto workflowAttributes = juce::AudioParameterFloatAttributes()
+        .withAutomatable(supportsRealtimeAutomation(workflowSpec))
         .withStringFromValueFunction([](float value, int)
         {
             const auto step = std::clamp(static_cast<int>(std::lround(value)), 0, 7);
@@ -249,10 +280,9 @@ void ToneTraceProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         }
         else
         {
-            const auto mode = currentMatchMode();
-            const auto seconds = tonetrace::capture::maximumCaptureSeconds(mode);
-            referenceCapture_.prepare(requestedRate, seconds);
-            targetCapture_.prepare(requestedRate, seconds);
+            referencePublishedPrefix_.store(0, std::memory_order_release);
+            referenceCapture_.release();
+            targetCapture_.release();
             mustResetLiveCapture = liveCapture;
         }
 
@@ -341,7 +371,7 @@ void ToneTraceProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Global bypass covers the complete JUCE-owned output path (released
     // correction + separate Correction Gain + generated tones). The released
     // realtime core used a 10 ms dry/wet transition; keep that exact timing here
-    // because Correction Gain intentionally remains outside the vendored core.
+    // because Correction Gain intentionally remains outside the frozen core.
     dryBuffer_.setSize(2, std::max(1, samplesPerBlock), false, false, true);
     outputBypass_.prepare(static_cast<int>(std::lround(sampleRate)),
                           toggleParameters_[tonetrace::product::kBypassIndex]->get());
@@ -409,15 +439,14 @@ void ToneTraceProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         activeToneIsNavigation_ = false;
     }
 
-    // The writer count closes the only capture/control race that matters here.
-    // A Correct request first changes phase away from capture, then the worker
-    // waits for this count to reach zero before copying raw audio. A block that
-    // entered before the phase change finishes its write; a later block sees the
-    // destination phase and writes nothing. No lock/wait/allocation is added to audio.
-    captureWriterCount_.fetch_add(1, std::memory_order_acq_rel);
-    executePendingAudioCommand();
-    captureInputSlice(buffer);
-    captureWriterCount_.fetch_sub(1, std::memory_order_acq_rel);
+    // Reports read a completed immutable prefix while this writer appends beyond
+    // it. Only a reset must wait for readers; ordinary capture never does.
+    captureWriterCount_.fetch_add(1, std::memory_order_seq_cst);
+    if (captureReaderCount_.load(std::memory_order_seq_cst) == 0)
+        executePendingAudioCommand();
+    if (pendingAudioCommand_.load(std::memory_order_acquire) == 0)
+        captureInputSlice(buffer);
+    captureWriterCount_.fetch_sub(1, std::memory_order_seq_cst);
 
     const auto channels = static_cast<std::size_t>(std::min(2, buffer.getNumChannels()));
     if (channels == 0) return;
@@ -632,6 +661,7 @@ void ToneTraceProcessor::executePendingAudioCommand() noexcept
     const int command = pendingAudioCommand_.exchange(0, std::memory_order_acq_rel);
     if (command == 1)
     {
+        referencePublishedPrefix_.store(0, std::memory_order_release);
         referenceCapture_.reset();
         targetCapture_.reset();
     }
@@ -663,6 +693,9 @@ void ToneTraceProcessor::captureInputSlice(juce::AudioBuffer<float>& buffer) noe
     const int oldConfidenceLevel = destination->confidenceLevel;
     destination->append(input, channels, static_cast<std::size_t>(buffer.getNumSamples()),
                         sampleRate, mode);
+    if (destination == &referenceCapture_)
+        referencePublishedPrefix_.store((static_cast<std::uint64_t>(destination->frames) << 2)
+            | destination->channelCount, std::memory_order_release);
 
     const auto seconds = destination->validSeconds(sampleRate);
     const auto confidenceLevel = destination->confidenceLevel;
@@ -773,8 +806,6 @@ void ToneTraceProcessor::setMatchModeFromUi(int index)
     matchMode_->setValueNotifyingHost(matchMode_->convertTo0to1(static_cast<float>(bounded)));
     lockedMatchModeIndex_.store(bounded, std::memory_order_release);
 
-    if (captureSampleRate_.load(std::memory_order_acquire) > 0)
-        ensureCaptureCapacityForMode(tonetrace::capture::matchModeFromIndex(bounded));
 }
 
 void ToneTraceProcessor::endMatchModeGesture()
@@ -789,6 +820,26 @@ void ToneTraceProcessor::setWorkflowFromUi(int step)
     workflowStep_->setValueNotifyingHost(
         workflowStep_->convertTo0to1(static_cast<float>(bounded)));
     workflowStep_->endChangeGesture();
+
+    const int previous = lastWorkflowStep_.load(std::memory_order_acquire);
+    const int decoded = tonetrace::capture::workflowStepFromHostValue(
+        static_cast<double>(workflowStep_->get()), previous);
+    if (decoded == previous)
+    {
+        // An explicit UI press is a command even when the visible step has not
+        // changed: "Capture Reference" restarts the Reference capture, and
+        // "Learn Target" restarts the Target capture. Correct/Freeze have no
+        // meaningful same-step restart, and host automation keeps using
+        // consumeWorkflowParameterChange so a stationary parameter is not
+        // replayed on every timer tick.
+        if (bounded == 1 || bounded == 2)
+        {
+            setWorkflowStepFromEngine(bounded);
+            handleWorkflowCommand(bounded);
+        }
+        return;
+    }
+
     consumeWorkflowParameterChange();
 }
 
@@ -1056,13 +1107,32 @@ std::optional<tonetrace::SpectrumCapture> ToneTraceProcessor::exportableReferenc
         const std::lock_guard<std::mutex> lock(manualStateMutex_);
         if (importedReference_.has_value()) return importedReference_;
     }
-    if (phase_.load(std::memory_order_acquire) == tonetrace::capture::WorkflowPhase::CapturingTarget
-        && referenceReady_.load(std::memory_order_acquire))
+    const auto phase = phase_.load(std::memory_order_acquire);
+    const bool liveReference = referenceReady_.load(std::memory_order_acquire)
+        && (phase == tonetrace::capture::WorkflowPhase::CapturingReference
+            || phase == tonetrace::capture::WorkflowPhase::CapturingTarget);
+    if (liveReference)
     {
-        while (captureWriterCount_.load(std::memory_order_acquire) != 0)
-            std::this_thread::yield();
         try
         {
+            // Pin storage against reset/reallocation, then copy only the prefix
+            // published by the audio thread. New input appends beyond this prefix.
+            tonetrace::AudioBuffer audio;
+            {
+                const std::lock_guard<std::mutex> lock(captureControlMutex_);
+                CaptureReadGuard readGuard(captureReaderCount_, captureWriterCount_);
+                const auto prefix = referencePublishedPrefix_.load(std::memory_order_acquire);
+                const auto frames = static_cast<std::size_t>(prefix >> 2);
+                const auto channels = static_cast<std::size_t>(prefix & 3);
+                if (frames == 0 || channels == 0 || channels > 2)
+                    return std::nullopt;
+                audio.sampleRate = captureSampleRate_.load(std::memory_order_acquire);
+                audio.channels.resize(channels);
+                for (std::size_t channel = 0; channel < channels; ++channel)
+                    audio.channels[channel].assign(referenceCapture_.channels[channel].begin(),
+                        referenceCapture_.channels[channel].begin() + static_cast<std::ptrdiff_t>(frames));
+            }
+
             tonetrace::MatchEngine engine;
             auto settings = currentCorrectionSettings();
             tonetrace::MatchSettings match;
@@ -1071,9 +1141,9 @@ std::optional<tonetrace::SpectrumCapture> ToneTraceProcessor::exportableReferenc
             match.rangeHighHz = 30000.0;
             match.resolution = settings.resolution;
             match.maximumCorrectionDb = 60.0;
-            return engine.capture(copyCaptureAudio(referenceCapture_, captureSampleRate_.load()), match);
+            return engine.capture(audio, match);
         }
-        catch (...) {}
+        catch (...) { return std::nullopt; }
     }
     if (const auto snapshot = correctionController_.snapshotCopy(); snapshot != nullptr)
         return snapshot->reference;
@@ -1082,10 +1152,17 @@ std::optional<tonetrace::SpectrumCapture> ToneTraceProcessor::exportableReferenc
 
 std::optional<tonetrace::SpectrumCapture> ToneTraceProcessor::exportableTarget() const
 {
+    // A just-imported Target is the user's current spectrum even while its
+    // background analysis is still running (or if that analysis is rejected).
+    // Match the Reference export precedence instead of preferring the previous
+    // committed snapshot.
+    {
+        const std::lock_guard<std::mutex> lock(manualStateMutex_);
+        if (importedTarget_.has_value()) return importedTarget_;
+    }
     if (const auto snapshot = correctionController_.snapshotCopy(); snapshot != nullptr)
         return snapshot->target;
-    const std::lock_guard<std::mutex> lock(manualStateMutex_);
-    return importedTarget_;
+    return std::nullopt;
 }
 
 std::optional<tonetrace::AudioBuffer> ToneTraceProcessor::exportableImpulseResponse() const
@@ -1124,6 +1201,8 @@ ToneTraceTransferResult ToneTraceProcessor::importReference(const tonetrace::Spe
 {
     try { tonetrace::validateSpectrumCapture(capture); }
     catch (const std::exception& e) { return { false, juce::String::fromUTF8(e.what()) }; }
+    if (capture.points.size() > kMaximumPersistedCapturePoints)
+        return { false, "Reference curve has too many points to save and reload (maximum 100000)." };
     const int rate = correctionController_.sampleRate();
     if (rate <= 0) return { false, "Audio engine is not prepared." };
     const auto [rangeLowHz, rangeHighHz] = currentTransferRangeHz(20.0, 20000.0);
@@ -1132,11 +1211,17 @@ ToneTraceTransferResult ToneTraceProcessor::importReference(const tonetrace::Spe
 
     cancelActiveTones();
     invalidateAnalysisWork();
+    // Reference import also starts live Target capture, so it is a capture
+    // request even though it does not pass through the workflow buttons.
+    ensureCaptureCapacityForMode(currentMatchMode());
+    if (!captureBuffersReadyForMode(currentMatchMode()))
+        return { false, "Capture storage is not ready." };
     {
         const std::lock_guard<std::mutex> lock(manualStateMutex_);
         importedReference_ = capture;
         importedTarget_.reset();
     }
+    bumpReportRevision();
     referenceReady_.store(true, std::memory_order_release);
     targetCorrectable_.store(false, std::memory_order_release);
     activeCaptureMode_.store(static_cast<int>(currentMatchMode()), std::memory_order_release);
@@ -1159,6 +1244,8 @@ ToneTraceTransferResult ToneTraceProcessor::importTarget(const tonetrace::Spectr
 {
     try { tonetrace::validateSpectrumCapture(capture); }
     catch (const std::exception& e) { return { false, juce::String::fromUTF8(e.what()) }; }
+    if (capture.points.size() > kMaximumPersistedCapturePoints)
+        return { false, "Target curve has too many points to save and reload (maximum 100000)." };
     const int rate = correctionController_.sampleRate();
     if (rate <= 0) return { false, "Audio engine is not prepared." };
     const auto [rangeLowHz, rangeHighHz] = currentTransferRangeHz(20.0, 20000.0);
@@ -1191,6 +1278,7 @@ ToneTraceTransferResult ToneTraceProcessor::importTarget(const tonetrace::Spectr
         const std::lock_guard<std::mutex> lock(manualStateMutex_);
         importedTarget_ = capture;
     }
+    bumpReportRevision();
     captureBlocked_.store(false, std::memory_order_release);
     setupLockedNotice_.store(false, std::memory_order_release);
     targetCorrectable_.store(false, std::memory_order_release);
@@ -1209,6 +1297,8 @@ ToneTraceTransferResult ToneTraceProcessor::importModel(const tonetrace::Correct
 {
     try { tonetrace::validateCorrectionModel(model); }
     catch (const std::exception& e) { return { false, juce::String::fromUTF8(e.what()) }; }
+    if (model.resolution < 1 || model.resolution > kMaximumPersistedBands)
+        return { false, "Correction model resolution must be between 1 and 120 bands." };
     const int rate = correctionController_.sampleRate();
     if (rate <= 0) return { false, "Audio engine is not prepared." };
     const auto [rangeLowHz, rangeHighHz] = currentTransferRangeHz(10.0, 30000.0);
@@ -1271,6 +1361,7 @@ ToneTraceTransferResult ToneTraceProcessor::importModel(const tonetrace::Correct
         importedReference_ = reference;
         importedTarget_ = target;
     }
+    bumpReportRevision();
 
     synchronizeObservedControlState();
     hasProfile_.store(true, std::memory_order_release);
@@ -1298,21 +1389,27 @@ void ToneTraceProcessor::timerCallback()
     consumeMatchModeChange();
     consumeCorrectionSettingChanges();
 
-    if (!captureActive() && !analysisBusy_.load(std::memory_order_acquire)
-        && captureSampleRate_.load(std::memory_order_acquire) > 0)
-        ensureCaptureCapacityForMode(currentMatchMode());
-
-    if (pendingReferenceStartAfterCapacity_.load(std::memory_order_acquire)
-        && captureBuffersReadyForMode(currentMatchMode()))
+    if (pendingReferenceStartAfterCapacity_.load(std::memory_order_acquire))
     {
-        pendingReferenceStartAfterCapacity_.store(false, std::memory_order_release);
-        handleWorkflowCommand(1);
+        // Also handles a capture request made before the host prepares audio.
+        ensureCaptureCapacityForMode(currentMatchMode());
+        if (captureBuffersReadyForMode(currentMatchMode()))
+        {
+            pendingReferenceStartAfterCapacity_.store(false, std::memory_order_release);
+            handleWorkflowCommand(1);
+        }
     }
 
     // This is a non-blocking control-thread cleanup; it returns immediately if
     // the analysis worker currently owns the released core.
     correctionController_.collectRetiredKernels();
     publishTelemetryParameters();
+    const auto revision = reportRevision();
+    if (revision != publishedReportRevision_)
+    {
+        publishedReportRevision_ = revision;
+        sendChangeMessage();
+    }
 }
 
 void ToneTraceProcessor::consumeMatchModeChange()
@@ -1427,8 +1524,6 @@ void ToneTraceProcessor::handleWorkflowCommand(int step)
         return;
     }
 
-    lastCommand_.store(step, std::memory_order_release);
-
     if (stateRestoreBusy_.load(std::memory_order_acquire))
     {
         setWorkflowStepFromEngine(workflowForPhase());
@@ -1441,6 +1536,7 @@ void ToneTraceProcessor::handleWorkflowCommand(int step)
         // analysing. Keep the host-visible step where the user put it and replay
         // the command through this same path after the analysis transaction ends.
         deferredWorkflowCommand_.store(step, std::memory_order_release);
+        lastCommand_.store(step, std::memory_order_release);
         setStatus(tonetrace::capture::Status::Analyzing);
         return;
     }
@@ -1450,9 +1546,12 @@ void ToneTraceProcessor::handleWorkflowCommand(int step)
     // Learn -> Correct from making stale Target audio reachable.
     if (pendingAudioCommand_.load(std::memory_order_acquire) != 0)
     {
+        // The command is dropped, so it must not be reported as the last action.
         setWorkflowStepFromEngine(workflowForPhase());
         return;
     }
+
+    lastCommand_.store(step, std::memory_order_release);
 
     if (step == 5)
     {
@@ -1549,7 +1648,11 @@ void ToneTraceProcessor::handleWorkflowCommand(int step)
         setStatus(tonetrace::capture::Status::PreparingCapture);
         pendingReferenceStartAfterCapacity_.store(step == 1, std::memory_order_release);
         ensureCaptureCapacityForMode(mode);
-        if (step == 2 && captureBuffersReadyForMode(mode)) handleWorkflowCommand(2);
+        if (captureBuffersReadyForMode(mode))
+        {
+            pendingReferenceStartAfterCapacity_.store(false, std::memory_order_release);
+            handleWorkflowCommand(step);
+        }
         return;
     }
 
@@ -1562,6 +1665,7 @@ void ToneTraceProcessor::handleWorkflowCommand(int step)
             importedReference_.reset();
             importedTarget_.reset();
         }
+        bumpReportRevision();
         activeCaptureMode_.store(static_cast<int>(mode), std::memory_order_release);
         lockedMatchModeIndex_.store(matchModeIndex(), std::memory_order_release);
         lastObservedMatchModeIndex_.store(matchModeIndex(), std::memory_order_release);
@@ -1679,6 +1783,7 @@ void ToneTraceProcessor::performConfirmedReset()
     resetPublishedCaptureStateForCommand(
         tonetrace::capture::WorkflowPhase::Ready,
         tonetrace::capture::Status::Ready);
+    bumpReportRevision();
     setWorkflowStepFromEngine(0);
 }
 
@@ -1741,6 +1846,11 @@ void ToneTraceProcessor::applyRestoredFrozenWorkflow(double restoredConfidence)
 void ToneTraceProcessor::setStatus(tonetrace::capture::Status value) noexcept
 {
     status_.store(static_cast<int>(value), std::memory_order_release);
+}
+
+void ToneTraceProcessor::bumpReportRevision() noexcept
+{
+    reportRevision_.fetch_add(1, std::memory_order_release);
 }
 
 void ToneTraceProcessor::publishTelemetryParameters()
@@ -1883,15 +1993,20 @@ tonetrace::AudioBuffer ToneTraceProcessor::copyCaptureAudio(
         || capture.channelCount > capture.channels.size())
         throw std::runtime_error("Capture contains no usable audio");
 
+    // Caller holds CaptureReadGuard and captureControlMutex_; resets cannot
+    // alter the counters or contents while this completed capture is copied.
+    const auto frames = capture.frames;
+    const auto channelCount = capture.channelCount;
+
     tonetrace::AudioBuffer audio;
     audio.sampleRate = sampleRate;
-    audio.channels.assign(capture.channelCount,
-                          std::vector<double>(capture.frames, 0.0));
-    for (std::size_t channel = 0; channel < capture.channelCount; ++channel)
+    audio.channels.assign(channelCount,
+                          std::vector<double>(frames, 0.0));
+    for (std::size_t channel = 0; channel < channelCount; ++channel)
     {
-        if (capture.channels[channel].size() < capture.frames)
+        if (capture.channels[channel].size() < frames)
             throw std::runtime_error("Capture buffer is internally inconsistent");
-        for (std::size_t frame = 0; frame < capture.frames; ++frame)
+        for (std::size_t frame = 0; frame < frames; ++frame)
             audio.channels[channel][frame] = capture.channels[channel][frame];
     }
     return audio;
@@ -1969,6 +2084,8 @@ void ToneTraceProcessor::runAnalyzeJob(const AnalysisJob& job)
         const std::lock_guard<std::mutex> lock(captureControlMutex_);
         if (!jobStillCurrent(job))
             return;
+        CaptureReadGuard readGuard(captureReaderCount_, captureWriterCount_);
+        if (!jobStillCurrent(job)) return;
         const int sampleRate = captureSampleRate_.load(std::memory_order_acquire);
         if (!importedReference.has_value())
             referenceAudio = copyCaptureAudio(referenceCapture_, sampleRate);
@@ -1992,7 +2109,9 @@ void ToneTraceProcessor::runAnalyzeJob(const AnalysisJob& job)
     const auto result = correctionController_.analyze(
         referenceAudio, targetAudio, referenceDiagnostics, targetDiagnostics,
         job.settings, importedReference.has_value() ? &*importedReference : nullptr,
-        importedTarget.has_value() ? &*importedTarget : nullptr);
+        importedTarget.has_value() ? &*importedTarget : nullptr,
+        [this, epoch = job.epoch] { return epoch != analysisEpoch_.load(std::memory_order_acquire); },
+        job.epoch);
     finishAnalyzeJob(job, result);
 }
 
@@ -2000,9 +2119,13 @@ void ToneTraceProcessor::runRebuildJob(const AnalysisJob& job)
 {
     if (!jobStillCurrent(job)) return;
     const bool learnedProfile = correctionController_.hasProfile();
+    const auto cancelled = [this, epoch = job.epoch]
+    {
+        return epoch != analysisEpoch_.load(std::memory_order_acquire);
+    };
     const auto result = learnedProfile
-        ? correctionController_.rebuild(job.settings)
-        : correctionController_.commitManualCorrection(job.settings);
+        ? correctionController_.rebuild(job.settings, cancelled)
+        : correctionController_.commitManualCorrection(job.settings, cancelled);
     finishRebuildJob(job, result);
 }
 
@@ -2022,6 +2145,7 @@ void ToneTraceProcessor::finishAnalyzeJob(
         curveDriftDb_.store(0.0, std::memory_order_release);
         phase_.store(tonetrace::capture::WorkflowPhase::Preview, std::memory_order_release);
         setStatus(tonetrace::capture::Status::Preview);
+        bumpReportRevision();
     }
     else
     {
@@ -2043,10 +2167,7 @@ void ToneTraceProcessor::finishRebuildJob(
     {
         const bool learnedProfile = correctionController_.hasProfile();
         hasProfile_.store(learnedProfile, std::memory_order_release);
-        if (const auto snapshot = correctionController_.snapshotCopy(); snapshot != nullptr)
-            tailSeconds_.store(snapshot->renderSettings.durationSeconds, std::memory_order_release);
-        else
-            tailSeconds_.store(0.0, std::memory_order_release);
+        tailSeconds_.store(result.committedTailSeconds, std::memory_order_release);
         if (learnedProfile)
         {
             const auto currentPhase = phase_.load(std::memory_order_acquire);
@@ -2054,6 +2175,7 @@ void ToneTraceProcessor::finishRebuildJob(
                 ? tonetrace::capture::Status::Frozen
                 : tonetrace::capture::Status::Preview);
         }
+        bumpReportRevision();
     }
     else
     {
@@ -2322,6 +2444,11 @@ bool ToneTraceProcessor::restoreState(const void* data, int sizeInBytes)
     }
 
     stateRestoreBusy_.store(true, std::memory_order_release);
+    struct RestoreRelease
+    {
+        std::atomic<bool>& busy;
+        ~RestoreRelease() { busy.store(false, std::memory_order_release); }
+    } restoreRelease { stateRestoreBusy_ };
     invalidateAnalysisWork();
 
     bool coreAccepted = true;
@@ -2335,7 +2462,6 @@ bool ToneTraceProcessor::restoreState(const void* data, int sizeInBytes)
             setStatus(result.issue == tonetrace::ProfileIssue::RendererBusy
                 ? tonetrace::capture::Status::RendererBusy
                 : tonetrace::capture::Status::AnalysisFailed);
-            stateRestoreBusy_.store(false, std::memory_order_release);
             return false;
         }
         const std::lock_guard<std::mutex> lock(pendingStateMutex_);
@@ -2355,13 +2481,11 @@ bool ToneTraceProcessor::restoreState(const void* data, int sizeInBytes)
 
     if (!coreAccepted)
     {
-        stateRestoreBusy_.store(false, std::memory_order_release);
         return false;
     }
 
-    // No operation below this point can fail: the core state and every
-    // normalized parameter were validated above, so applying them is atomic at
-    // the product-state level.
+    // Validation is complete. The scope guard also releases workflow commands
+    // if allocation or a host parameter listener throws while applying state.
     for (std::size_t index = 0; index < stateParameters_.size(); ++index)
         stateParameters_[index].parameter->setValueNotifyingHost(restored[index]);
 
@@ -2411,7 +2535,7 @@ bool ToneTraceProcessor::restoreState(const void* data, int sizeInBytes)
     }
 
     synchronizeObservedControlState();
-    stateRestoreBusy_.store(false, std::memory_order_release);
+    bumpReportRevision();
     return true;
 }
 

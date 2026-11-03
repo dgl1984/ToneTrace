@@ -16,6 +16,7 @@ public:
     std::function<void(std::size_t, int)> onNavigate;
     std::function<void()> onToggleTrace;
 
+    void paint(juce::Graphics&) override;
     bool keyPressed(const juce::KeyPress&) override;
     void focusGained(juce::Component::FocusChangeType) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;

@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "platform/ToneTraceAnnouncements.h"
 #include "tonetrace/tonetrace_describe.h"
 #include "PluginProcessor.h"
 #include "ui/ToneTraceDesignSystem.h"
@@ -46,7 +47,7 @@ public:
         setAccessible(true);
         setTitle("Tone Trace EQ Options");
         setDescription("Tone Trace options for Full Correction Range, tone notifications, confidence tone volume, bypass, and reset.");
-        setSize(470, 330);
+        setSize(470, 350);
 
         fullRange_.setButtonText("Full Correction Range");
         fullRange_.setToggleState(initial.fullCorrectionRange, juce::dontSendNotification);
@@ -133,7 +134,7 @@ public:
         bypass_.setBounds(area.removeFromTop(32));
         area.removeFromTop(10);
 
-        auto resetRow = area.removeFromTop(46);
+        auto resetRow = area.removeFromTop(66);
         resetButton_.setBounds(resetRow.removeFromLeft(165));
         resetRow.removeFromLeft(10);
         resetExplanation_.setBounds(resetRow);
@@ -162,7 +163,7 @@ private:
         {
             error_.setText("Enter a valid Confidence Tone Volume, for example -12 dB, or Off.", juce::dontSendNotification);
             error_.setVisible(true);
-            juce::AccessibilityHandler::postAnnouncement(error_.getText(), juce::AccessibilityHandler::AnnouncementPriority::high);
+            tonetrace::platform::announce(*this, error_.getText(), juce::AccessibilityHandler::AnnouncementPriority::high);
             toneEditor_.grabKeyboardFocus();
             toneEditor_.selectAll();
             return;
@@ -246,10 +247,10 @@ ToneTraceEditor::ToneTraceEditor(ToneTraceProcessor& processor)
     // nested focus-container experiment, no startup focus grab, no REAPER wrapper
     // manipulation, and direct interactive children.
     setAccessible(true);
-    setTitle("Tone Trace 1.1");
+    setTitle("Tone Trace 1.2");
     setDescription("Tone Trace EQ. Capture, correction, band editing, curve inspection, import and export.");
 
-    heading_.setText("Tone Trace 1.1", juce::dontSendNotification);
+    heading_.setText("Tone Trace 1.2", juce::dontSendNotification);
     heading_.setFont(type::title());
     heading_.setColour(juce::Label::textColourId, colour::text);
     heading_.setJustificationType(juce::Justification::centredLeft);
@@ -484,10 +485,12 @@ ToneTraceEditor::ToneTraceEditor(ToneTraceProcessor& processor)
     setResizeLimits(minimumWidth, minimumHeight, maximumWidth, maximumHeight);
     setResizable(true, true);
     for (auto* child : getChildren()) child->addKeyListener(this);
+    processor_.addChangeListener(this);
 }
 
 ToneTraceEditor::~ToneTraceEditor()
 {
+    processor_.removeChangeListener(this);
     cancelPendingUpdate();
     for (std::size_t index = 0; index < continuousControls_.size(); ++index)
         processor_.continuousParameter(index).removeListener(this);
@@ -541,6 +544,22 @@ void ToneTraceEditor::updateStatusField()
     const int status = processor_.statusCode();
     const int command = processor_.lastCommandCode();
     const bool semanticChange = status != lastRenderedStatus_ || command != lastRenderedCommand_;
+    const int step = processor_.workflowStep();
+    const bool busy = processor_.analysisBusy();
+    const int next = busy ? 0 : step == 0 ? 1 : step == 1 && processor_.referenceReady() ? 2
+        : step == 2 && processor_.targetReady() ? 3 : step == 3 && processor_.profileActive() ? 4 : 0;
+    int buttonStep = 1;
+    for (auto* button : { &captureReferenceButton_, &learnTargetButton_, &correctTargetButton_, &freezeCorrectionButton_ })
+    {
+        const bool recommended = buttonStep++ == next;
+        button->setColour(juce::TextButton::buttonColourId, recommended ? tonetrace::ui::colour::accent : tonetrace::ui::colour::panelRaised);
+        button->setColour(juce::TextButton::textColourOffId, recommended ? tonetrace::ui::colour::background : tonetrace::ui::colour::text);
+    }
+    const auto state = juce::String(tonetrace::capture::statusText(static_cast<tonetrace::capture::Status>(status)));
+    subtitle_.setText(state + " | Output gain "
+        + juce::String(processor_.continuousValue(tonetrace::product::kCorrectionGainIndex), 1) + " dB"
+        + (processor_.toggleValue(tonetrace::product::kBypassIndex) ? " | BYPASSED" : ""), juce::dontSendNotification);
+
 
     // While a screen-reader user is reading this field, avoid replacing its
     // value for every 50 ms Capture Time / Curve Drift change. Status and Last
@@ -685,7 +704,7 @@ void ToneTraceEditor::showExactEntryError(const ToneTraceParameterSlider& target
     exactEntryError_.setDescription("Exact value entry error message.");
     exactEntryError_.setText(message, juce::dontSendNotification);
     exactEntryError_.setVisible(true);
-    juce::AccessibilityHandler::postAnnouncement(
+    tonetrace::platform::announce(*this, 
         message, juce::AccessibilityHandler::AnnouncementPriority::high);
 }
 
@@ -736,21 +755,35 @@ void ToneTraceEditor::showBandExactEntryError(const ToneTraceBandSlider& target)
     exactEntryError_.setDescription("Exact band value entry error message.");
     exactEntryError_.setText(message, juce::dontSendNotification);
     exactEntryError_.setVisible(true);
-    juce::AccessibilityHandler::postAnnouncement(message, juce::AccessibilityHandler::AnnouncementPriority::high);
+    tonetrace::platform::announce(*this, message, juce::AccessibilityHandler::AnnouncementPriority::high);
 }
 
 void ToneTraceEditor::updateGraph()
 {
-    auto snapshot = processor_.profileSnapshotCopy();
-    graphSurface_.updateFromState(snapshot.get(), processor_.graphRenderSettings(),
-                                  processor_.graphMaximumCorrectionDb());
-    if (snapshot != nullptr)
+    const auto settings = processor_.graphRenderSettings();
+    const auto revision = processor_.reportRevision();
+    const auto maximum = processor_.graphMaximumCorrectionDb();
+    const bool changed = revision != graphRevision_ || maximum != graphMaximumDb_
+        || settings.correctionGainDb != graphSettings_.correctionGainDb
+        || settings.correctionStrength != graphSettings_.correctionStrength
+        || settings.correctionSharpness != graphSettings_.correctionSharpness
+        || settings.rangeLowHz != graphSettings_.rangeLowHz
+        || settings.rangeHighHz != graphSettings_.rangeHighHz
+        || settings.manualGains != graphSettings_.manualGains;
+    if (changed)
     {
-        snapshot->renderSettings = processor_.graphRenderSettings();
-        snapshot->matchSettings.maximumCorrectionDb = processor_.graphMaximumCorrectionDb();
+        graphRevision_ = revision;
+        graphSettings_ = settings;
+        graphMaximumDb_ = maximum;
+        graphSnapshot_ = processor_.profileSnapshotCopy();
+        graphSurface_.updateFromState(graphSnapshot_.get(), graphSettings_, maximum);
+        auto description = graphSnapshot_ != nullptr ? *graphSnapshot_ : tonetrace::ProfileSnapshot{};
+        description.renderSettings = graphSettings_;
+        description.matchSettings.maximumCorrectionDb = maximum;
+        completedDescription_ = juce::String::fromUTF8(tonetrace::curveDescriptionText(description).c_str());
     }
-    curveDescription_.setContent(juce::String::fromUTF8(
-        tonetrace::curveDescriptionText(snapshot != nullptr ? *snapshot : tonetrace::ProfileSnapshot{}).c_str()), false);
+    // Stage transitions and capture progress still refresh the contextual report.
+    curveDescription_.setContent(completedDescription_, false);
 }
 
 void ToneTraceEditor::toggleTrace()
@@ -785,21 +818,26 @@ void ToneTraceEditor::updateCurveReadout(double frequencyHz, bool bandReadout, b
         }
         else text += "; manual graphic EQ, no learned correction";
     }
-    else if (const auto snapshot = processor_.profileSnapshotCopy(); snapshot != nullptr)
+    else if (const auto* snapshot = graphSnapshot_.get(); snapshot != nullptr)
     {
         const auto nearest = [frequencyHz](const tonetrace::SpectrumCapture& capture)
         {
             if (capture.points.empty()) return juce::String("unavailable");
             const auto point = std::min_element(capture.points.begin(), capture.points.end(),
                 [frequencyHz](const auto& a, const auto& b) { return std::abs(a.frequencyHz - frequencyHz) < std::abs(b.frequencyHz - frequencyHz); });
-            return juce::String(point->levelDb, 3) + " dB";
+            double mean = 0.0;
+            for (const auto& p : capture.points) mean += p.levelDb;
+            mean /= static_cast<double>(capture.points.size());
+            return juce::String(point->levelDb - mean, 3) + " dB rel.";
         };
-        const double correction = tonetrace::evaluateCorrectionAt(snapshot->uncappedModel,
-            processor_.graphMaximumCorrectionDb(), processor_.graphRenderSettings(), frequencyHz).tonalDb;
+        const double correction = tonetrace::ui::displayedCorrectionDb(snapshot,
+            graphSettings_, graphMaximumDb_, frequencyHz);
         text = juce::String(frequencyHz, 0) + " Hz | Reference " + nearest(snapshot->reference)
-            + " | Target " + nearest(snapshot->target) + " | Correction " + juce::String(correction, 3) + " dB";
+            + " | Target " + nearest(snapshot->target) + " | Correction + gain " + juce::String(correction, 3) + " dB";
     }
-    else text = "Curve Readout: move over the graph or use Trace Curve to inspect exact values.";
+    else text = juce::String(frequencyHz, 0) + " Hz | Correction + gain "
+        + juce::String(tonetrace::ui::displayedCorrectionDb(nullptr, graphSettings_, graphMaximumDb_, frequencyHz), 3)
+        + " dB | Manual EQ";
     curveReadout_.setContent(text, announce);
 }
 
@@ -1046,7 +1084,8 @@ void ToneTraceEditor::updatePageVisibility()
         continuousControls_[i]->setVisible((correctionPage || resolutionOnBandPage)
                                            && continuousControls_[i].get() != exactTarget_);
     }
-    for (auto& control : toggleControls_) control->setVisible(correctionPage);
+    for (std::size_t i = 0; i < toggleControls_.size(); ++i)
+        toggleControls_[i]->setVisible(correctionPage || i == tonetrace::product::kBypassIndex);
 
     bandHeading_.setVisible(bandPage);
     int pageStart = 0;
@@ -1057,14 +1096,33 @@ void ToneTraceEditor::updatePageVisibility()
         for (int p = 0; p < selected && p < bandPageCount_; ++p) pageStart += bandPageSizes_[static_cast<std::size_t>(p)];
         if (selected >= 0 && selected < bandPageCount_) pageCount = bandPageSizes_[static_cast<std::size_t>(selected)];
     }
+    bool exactBandVisible = false;
     for (std::size_t i = 0; i < bandControls_.size(); ++i)
     {
         const bool visible = bandPage && static_cast<int>(i) >= pageStart && static_cast<int>(i) < pageStart + pageCount;
+        if (bandControls_[i].get() == bandExactTarget_) exactBandVisible = visible;
         bandControls_[i]->setVisible(visible && bandControls_[i].get() != bandExactTarget_);
         bandFrequencyLabels_[i]->setVisible(visible);
         bandValueLabels_[i]->setVisible(visible);
     }
-    if (exactEditor_ != nullptr) exactEditor_->setVisible(true);
+
+    if (exactEditor_ != nullptr)
+    {
+        // The exact-entry editor is an overlay for one control. It must follow
+        // that control's page rather than stay visible over an unrelated page.
+        bool showExact = false;
+        if (exactTarget_ != nullptr)
+        {
+            for (std::size_t i = 0; i < continuousControls_.size(); ++i)
+                if (continuousControls_[i].get() == exactTarget_)
+                    showExact = correctionPage
+                        || (bandPage
+                            && i == tonetrace::product::kCorrectionResolutionIndex);
+        }
+        else if (bandExactTarget_ != nullptr)
+            showExact = exactBandVisible;
+        exactEditor_->setVisible(showExact);
+    }
 }
 
 void ToneTraceEditor::announceTransferResult(const juce::String& text, bool error)
@@ -1075,7 +1133,7 @@ void ToneTraceEditor::announceTransferResult(const juce::String& text, bool erro
     // in an announcement made successful menu actions appear to do nothing
     // when a host had no active screen reader.
     curveReadout_.setText(text, juce::dontSendNotification);
-    juce::AccessibilityHandler::postAnnouncement(text,
+    tonetrace::platform::announce(*this, text,
         error ? juce::AccessibilityHandler::AnnouncementPriority::high
               : juce::AccessibilityHandler::AnnouncementPriority::medium);
 }
@@ -1335,6 +1393,13 @@ void ToneTraceEditor::setSnapshotPage(int pageId)
     resized();
 }
 
+void ToneTraceEditor::setSnapshotInvalidEntry()
+{
+    beginExactEntry(*continuousControls_[tonetrace::product::kCorrectionGainIndex]);
+    exactEditor_->setText("invalid", false);
+    finishExactEntry(true, false);
+}
+
 int ToneTraceEditor::getSnapshotPageCount() const noexcept
 {
     return juce::jmax(1, pageSelector_.pageCount());
@@ -1383,67 +1448,76 @@ void ToneTraceEditor::resized()
     (void) rebuildViewPages(true);
 
     auto area = getLocalBounds().reduced(spacing::outer);
-    heading_.setBounds(area.removeFromTop(35));
-    subtitle_.setBounds(area.removeFromTop(25));
-    area.removeFromTop(6);
-    auto selectorRow = area.removeFromTop(34);
+    auto headingRow = area.removeFromTop(30);
+    toggleControls_[tonetrace::product::kBypassIndex]->setBounds(headingRow.removeFromRight(120));
+    heading_.setBounds(headingRow);
+    subtitle_.setBounds(area.removeFromTop(20));
+    area.removeFromTop(4);
+    auto selectorRow = area.removeFromTop(32);
     pageSelector_.setBounds(selectorRow);
-    area.removeFromTop(6);
-    auto readoutRow = area.removeFromTop(44);
+    area.removeFromTop(4);
+    auto readoutRow = area.removeFromTop(36);
     traceButton_.setBounds(readoutRow.removeFromRight(130));
     curveReadout_.setBounds(readoutRow);
-    area.removeFromTop(spacing::sectionGap);
+    area.removeFromTop(8);
 
-    constexpr int controlsHeight = 500;
-    controlsPanelBounds_ = area.removeFromBottom(std::min(controlsHeight, std::max(360, area.getHeight() * 2 / 3)));
-    area.removeFromBottom(spacing::sectionGap);
+    const bool compact = getHeight() < 740;
+    const int rowHeight = compact ? 28 : 34;
+    const int rowGap = 4;
+    controlsPanelBounds_ = area.removeFromBottom(std::min(440, std::max(340, area.getHeight() * 2 / 3)));
+    area.removeFromBottom(10);
     graphPanelBounds_ = area;
     graphSurface_.setBounds(graphPanelBounds_);
 
     auto controls = controlsPanelBounds_.reduced(spacing::panelInset);
+    if (exactEntryError_.isVisible())
+    {
+        exactEntryError_.setBounds(controls.removeFromTop(34));
+        controls.removeFromTop(4);
+    }
     const int pageIndex = juce::jmax(0, pageSelector_.selectedPage());
 
     if (pageIndex == 0)
     {
         controlsHeading_.setBounds(controls.removeFromTop(24));
-        controls.removeFromTop(spacing::rowGap);
-        auto row = controls.removeFromTop(spacing::rowHeight);
-        auto leftButton = row.removeFromLeft((row.getWidth() - spacing::rowGap) / 2);
-        row.removeFromLeft(spacing::rowGap);
+        controls.removeFromTop(rowGap);
+        auto row = controls.removeFromTop(rowHeight);
+        auto leftButton = row.removeFromLeft((row.getWidth() - rowGap) / 2);
+        row.removeFromLeft(rowGap);
         captureReferenceButton_.setBounds(leftButton);
         learnTargetButton_.setBounds(row);
-        controls.removeFromTop(spacing::rowGap);
+        controls.removeFromTop(rowGap);
 
-        row = controls.removeFromTop(spacing::rowHeight);
-        leftButton = row.removeFromLeft((row.getWidth() - spacing::rowGap) / 2);
-        row.removeFromLeft(spacing::rowGap);
+        row = controls.removeFromTop(rowHeight);
+        leftButton = row.removeFromLeft((row.getWidth() - rowGap) / 2);
+        row.removeFromLeft(rowGap);
         correctTargetButton_.setBounds(leftButton);
         freezeCorrectionButton_.setBounds(row);
-        controls.removeFromTop(spacing::rowGap);
+        controls.removeFromTop(rowGap);
 
-        row = controls.removeFromTop(spacing::rowHeight);
+        row = controls.removeFromTop(rowHeight);
         matchModeLabel_.setBounds(row.removeFromLeft(spacing::labelWidth));
-        row.removeFromLeft(spacing::rowGap);
+        row.removeFromLeft(rowGap);
         optionsButton_.setBounds(row.removeFromRight(120));
-        row.removeFromRight(spacing::rowGap);
+        row.removeFromRight(rowGap);
         matchModeControl_->setBounds(row);
-        controls.removeFromTop(spacing::rowGap);
+        controls.removeFromTop(rowGap);
 
         transferHeading_.setBounds(controls.removeFromTop(22));
         controls.removeFromTop(4);
-        row = controls.removeFromTop(spacing::rowHeight);
-        auto exportArea = row.removeFromLeft((row.getWidth() - spacing::rowGap) / 2);
-        row.removeFromLeft(spacing::rowGap);
+        row = controls.removeFromTop(rowHeight);
+        auto exportArea = row.removeFromLeft((row.getWidth() - rowGap) / 2);
+        row.removeFromLeft(rowGap);
         exportButton_.setBounds(exportArea);
         importButton_.setBounds(row);
-        controls.removeFromTop(spacing::rowGap);
+        controls.removeFromTop(rowGap);
         auto labels = controls.removeFromTop(22);
-        statusLabel_.setBounds(labels.removeFromLeft((labels.getWidth() - spacing::rowGap) / 2));
-        labels.removeFromLeft(spacing::rowGap);
+        statusLabel_.setBounds(labels.removeFromLeft((labels.getWidth() - rowGap) / 2));
+        labels.removeFromLeft(rowGap);
         curveDescriptionLabel_.setBounds(labels);
         controls.removeFromTop(4);
-        statusField_.setBounds(controls.removeFromLeft((controls.getWidth() - spacing::rowGap) / 2));
-        controls.removeFromLeft(spacing::rowGap);
+        statusField_.setBounds(controls.removeFromLeft((controls.getWidth() - rowGap) / 2));
+        controls.removeFromLeft(rowGap);
         copyDescriptionButton_.setBounds(controls.removeFromBottom(28));
         controls.removeFromBottom(4);
         curveDescription_.setBounds(controls);
@@ -1451,40 +1525,41 @@ void ToneTraceEditor::resized()
     else if (pageIndex == 1)
     {
         auto available = controls;
-        const int rowHeight = std::max(31, std::min(spacing::rowHeight,
-            (available.getHeight() - static_cast<int>(continuousControls_.size()) * spacing::rowGap - 50)
-                / static_cast<int>(continuousControls_.size() + 1)));
+        const int controlRowHeight = std::min(rowHeight,
+            (available.getHeight() - static_cast<int>(continuousControls_.size()) * rowGap - 28)
+                / static_cast<int>(continuousControls_.size()));
         for (std::size_t index = 0; index < continuousControls_.size(); ++index)
         {
-            auto row = available.removeFromTop(rowHeight);
+            auto row = available.removeFromTop(controlRowHeight);
             continuousLabels_[index]->setBounds(row.removeFromLeft(spacing::labelWidth));
-            row.removeFromLeft(spacing::rowGap);
+            row.removeFromLeft(rowGap);
             continuousValueLabels_[index]->setBounds(row.removeFromRight(spacing::valueWidth));
-            row.removeFromRight(spacing::rowGap);
+            row.removeFromRight(rowGap);
             continuousControls_[index]->setBounds(row);
             if (exactTarget_ == continuousControls_[index].get() && exactEditor_ != nullptr)
                 exactEditor_->setBounds(row.reduced(1, 3));
-            available.removeFromTop(spacing::rowGap);
+            available.removeFromTop(rowGap);
         }
         if (!toggleControls_.empty())
         {
             auto row = available.removeFromTop(std::max(32, available.getHeight()));
-            const int width = std::max(1, (row.getWidth() - static_cast<int>(toggleControls_.size() - 1) * spacing::rowGap)
-                / static_cast<int>(toggleControls_.size()));
+            const int width = std::max(1, (row.getWidth() - static_cast<int>(toggleControls_.size() - 2) * rowGap)
+                / static_cast<int>(toggleControls_.size() - 1));
             for (std::size_t i = 0; i < toggleControls_.size(); ++i)
             {
+                if (i == tonetrace::product::kBypassIndex) continue;
                 toggleControls_[i]->setBounds(row.removeFromLeft(width));
-                if (i + 1 < toggleControls_.size()) row.removeFromLeft(spacing::rowGap);
+                if (i + 1 < toggleControls_.size()) row.removeFromLeft(rowGap);
             }
         }
     }
     else
     {
         bandHeading_.setBounds(controls.removeFromTop(24));
-        controls.removeFromTop(spacing::rowGap);
+        controls.removeFromTop(rowGap);
         {
             const auto i = tonetrace::product::kCorrectionResolutionIndex;
-            auto row = controls.removeFromTop(spacing::rowHeight);
+            auto row = controls.removeFromTop(rowHeight);
             auto labelArea = row.removeFromLeft(170);
             continuousLabels_[i]->setBounds(labelArea);
             auto valueArea = row.removeFromRight(100);
@@ -1519,5 +1594,5 @@ void ToneTraceEditor::resized()
         }
     }
 
-    exactEntryError_.setBounds(controlsPanelBounds_.reduced(spacing::panelInset).removeFromBottom(24));
+
 }

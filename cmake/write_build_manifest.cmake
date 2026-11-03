@@ -43,7 +43,6 @@ set(SOURCE_FILES
   "${SOURCE_ROOT}/CMakeLists.txt"
   "${SOURCE_ROOT}/CMakePresets.json"
   "${SOURCE_ROOT}/VERSION"
-  "${SOURCE_ROOT}/Makefile"
   "${SOURCE_ROOT}/README.md"
   "${SOURCE_ROOT}/MANUAL.md"
   "${SOURCE_ROOT}/DESIGN.md"
@@ -57,10 +56,20 @@ set(SOURCE_FILES
   "${SOURCE_ROOT}/.gitignore"
   "${SOURCE_ROOT}/.gitattributes"
   "${SOURCE_ROOT}/build_all_windows.bat")
-foreach(SOURCE_DIRECTORY IN ITEMS include src tests tools plugins cmake third_party .github)
+foreach(SOURCE_DIRECTORY IN ITEMS include src tests tools plugins cmake .github)
   if(IS_DIRECTORY "${SOURCE_ROOT}/${SOURCE_DIRECTORY}")
     file(GLOB_RECURSE DIRECTORY_FILES LIST_DIRECTORIES false
       "${SOURCE_ROOT}/${SOURCE_DIRECTORY}/*")
+    # The authoritative list describes source, not local build state. Exclude
+    # generated build trees, fetched dependencies, caches, and packaged output
+    # so a manifest made beside a working build tree still matches a clean
+    # source archive.
+    list(FILTER DIRECTORY_FILES EXCLUDE REGEX
+      "/(build[^/]*|_deps|deps|CMakeFiles|\\.git|\\.vs|\\.cache|dist|out|visual-snapshots|publish-[^/]*|release-[^/]*)(/|$)")
+    list(FILTER DIRECTORY_FILES EXCLUDE REGEX
+      "/(CMakeCache\\.txt|cmake_install\\.cmake|AUDIT_STATE\\.md|Thumbs\\.db|\\.DS_Store|\\$out)$")
+    list(FILTER DIRECTORY_FILES EXCLUDE REGEX
+      "\\.(exe|dll|lib|pdb|obj|ilk|exp|log|zip|sha256|tmp)$")
     list(APPEND SOURCE_FILES ${DIRECTORY_FILES})
   endif()
 endforeach()
@@ -74,3 +83,17 @@ foreach(FILE_PATH IN LISTS SOURCE_FILES)
     file(APPEND "${OUT}" "${FILE_HASH}  ${RELATIVE_PATH}\n")
   endif()
 endforeach()
+
+# Every explicitly listed source file is part of the published record. A
+# silent skip would hide a missing licence, policy, or release document.
+set(MISSING_SOURCE_FILES)
+foreach(FILE_PATH IN LISTS SOURCE_FILES)
+  if(NOT EXISTS "${FILE_PATH}")
+    file(RELATIVE_PATH RELATIVE_PATH "${SOURCE_ROOT}" "${FILE_PATH}")
+    list(APPEND MISSING_SOURCE_FILES "${RELATIVE_PATH}")
+  endif()
+endforeach()
+if(MISSING_SOURCE_FILES)
+  list(JOIN MISSING_SOURCE_FILES ", " MISSING_SOURCE_LIST)
+  message(WARNING "Manifest skipped missing source files: ${MISSING_SOURCE_LIST}")
+endif()

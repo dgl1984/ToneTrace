@@ -1,4 +1,5 @@
 #include "ToneTraceBandSlider.h"
+#include "ui/ToneTraceDesignSystem.h"
 
 #include <algorithm>
 #include <cmath>
@@ -24,6 +25,13 @@ ToneTraceBandSlider::ToneTraceBandSlider(std::size_t bandIndex, double frequency
         if (!syncing_ && onUserValueChanged) onUserValueChanged(bandIndex_, getValue());
     };
     updateAccessibilityText();
+}
+
+void ToneTraceBandSlider::paint(juce::Graphics& g)
+{
+    g.setColour(tonetrace::ui::colour::border);
+    g.drawHorizontalLine(getHeight() / 2, 0.0f, static_cast<float>(getWidth()));
+    juce::Slider::paint(g);
 }
 
 void ToneTraceBandSlider::focusGained(juce::Component::FocusChangeType cause)

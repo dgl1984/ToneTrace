@@ -2,12 +2,13 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-function Read-Source { param([string]$Relative) Get-Content -LiteralPath (Join-Path $root $Relative) -Raw }
+function Resolve-RepoPath { param([string]$Relative) Join-Path $root ($Relative -replace '\\', [IO.Path]::DirectorySeparatorChar) }
+function Read-Source { param([string]$Relative) Get-Content -LiteralPath (Resolve-RepoPath $Relative) -Raw }
 function Require-Text { param([string]$Haystack,[string]$Needle,[string]$Message) if (-not $Haystack.Contains($Needle)) { throw $Message } }
 function Reject-Text { param([string]$Haystack,[string]$Needle,[string]$Message) if ($Haystack.Contains($Needle)) { throw $Message } }
 function Require-Sha256 {
     param([string]$Relative,[string]$Expected)
-    $path = Join-Path $root $Relative
+    $path = Resolve-RepoPath $Relative
     if (-not (Test-Path -LiteralPath $path)) { throw ('Missing hash-locked release file: ' + $Relative) }
     $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $Expected.ToLowerInvariant()) {
@@ -53,18 +54,19 @@ $bypassHeader = Read-Source 'src\tone\ToneTraceOutputBypass.h'
 $toneTests = Read-Source 'tests\NotificationToneTests.cpp'
 $bypassTests = Read-Source 'tests\OutputBypassTests.cpp'
 $graph = Read-Source 'src\ui\ToneTraceGraphSurface.cpp'
+$graphValues = Read-Source 'src\ui\ToneTraceGraphSurface.h'
 $design = Read-Source 'src\ui\ToneTraceDesignSystem.h'
 $stoppedTransportTone = Read-Source 'src\platform\ToneTraceStoppedTransportTone.cpp'
 $stoppedTransportToneHeader = Read-Source 'src\platform\ToneTraceStoppedTransportTone.h'
 $clapCompatibility = Read-Source 'cmake\ToneTraceClapCompatibility.cmake'
 
 # Exact 1.0.5 release provenance: these bytes are not JUCE rewrites.
-Require-Sha256 'vendor\tonetrace-1.0.5\include\tonetrace\tonetrace_engine.h' '780501c603678d4d55afd827f1ab079bf90f606b551f2e08a54c6d4e86837987'
-Require-Sha256 'vendor\tonetrace-1.0.5\src\tonetrace_engine.cpp' 'a4b7be60159dd2b0ed5cad2028cdf33ce81130c0165e8a1b825b929888dc9435'
-Require-Sha256 'vendor\tonetrace-1.0.5\include\tonetrace\tonetrace_realtime.h' '64d8147398afc1a1704425d549f2117c39e67592750b46ad4e62ca7d082f2d93'
-Require-Sha256 'vendor\tonetrace-1.0.5\src\tonetrace_realtime.cpp' '4a4419a7f0d58e57f64a083d469c9359f5e531a4d0b18695e9e4b6523a2648c8'
-Require-Sha256 'vendor\tonetrace-1.0.5\include\tonetrace\tonetrace_describe.h' 'b9ef67ef25450a43ff7944c0511a99c2200cf19471d718806d31aa442a42a86d'
-Require-Sha256 'vendor\tonetrace-1.0.5\src\tonetrace_describe.cpp' '554b2d6bdad6c2ce2417678e925a12ed83e141f669dde6741be8eac36ad217f6'
+Require-Sha256 '..\..\include\tonetrace\tonetrace_engine.h' '780501c603678d4d55afd827f1ab079bf90f606b551f2e08a54c6d4e86837987'
+Require-Sha256 '..\..\src\tonetrace_engine.cpp' 'a4b7be60159dd2b0ed5cad2028cdf33ce81130c0165e8a1b825b929888dc9435'
+Require-Sha256 '..\..\include\tonetrace\tonetrace_realtime.h' '64d8147398afc1a1704425d549f2117c39e67592750b46ad4e62ca7d082f2d93'
+Require-Sha256 '..\..\src\tonetrace_realtime.cpp' '4a4419a7f0d58e57f64a083d469c9359f5e531a4d0b18695e9e4b6523a2648c8'
+Require-Sha256 '..\..\include\tonetrace\tonetrace_describe.h' 'b9ef67ef25450a43ff7944c0511a99c2200cf19471d718806d31aa442a42a86d'
+Require-Sha256 '..\..\src\tonetrace_describe.cpp' '554b2d6bdad6c2ce2417678e925a12ed83e141f669dde6741be8eac36ad217f6'
 Require-Sha256 'tests\ReleasedEngineTests.cpp' 'b00ede00c8dd8aa25de2cac93a539c3e245fc935e09490d35b7e03ccc8d7c149'
 Require-Sha256 'tests\ReleasedRealtimeTests.cpp' '87df8eafd0ccd7c6d9288f386c8f3f7d0eb6b14b980ac0efadaca9db3812921f'
 Require-Text $cmake 'ToneTraceReleasedEngineTests' 'Exact released engine tests must be part of the build.'
@@ -171,7 +173,7 @@ Require-Text $editor 'target->setFromExactEntry(parsed);' 'Exact commit must ret
 Require-Text $editor 'exactEditor_->grabKeyboardFocus();' 'User-invoked exact entry must receive focus.'
 Require-Text $editor 'target->grabKeyboardFocus();' 'Commit/cancel must return focus to the invoking slider.'
 Require-Text $editor 'removeChildComponent(exactEditor_.get());' 'Exact editor must leave hierarchy on close.'
-Require-Text $editor 'AccessibilityHandler::postAnnouncement' 'Invalid exact input must announce recovery.'
+Require-Text $editor 'tonetrace::platform::announce' 'Invalid exact input must announce through assistive technology.'
 
 # Workflow UI is real and screen-reader reachable.
 Require-Text $editorHeader 'ToneTraceCommandButton captureReferenceButton_' 'Capture Reference button missing.'
@@ -198,8 +200,8 @@ Require-Text $design 'minimumWidth = 720' 'Minimum editor width must remain expl
 Require-Text $design 'defaultWidth = 960' 'Default editor width must remain explicit.'
 Require-Text $graph 'setAccessible(false);' 'Graph must remain outside the accessibility tree; bands expose the editable curve.'
 Require-Text $graph 'setWantsKeyboardFocus(false);' 'Graph must not become a Tab stop.'
-Require-Text $graph 'evaluateCorrectionAt' 'Graph must render the same released correction evaluator used by the FIR path.'
-Require-Text $graph 'manualGainDbAt' 'Graph must render manual-only correction when no learned profile exists.'
+Require-Text $graphValues 'evaluateCorrectionAt' 'Graph must render the same released correction evaluator used by the FIR path.'
+Require-Text $graphValues 'manualGainDbAt' 'Graph must render manual-only correction when no learned profile exists.'
 Require-Text $editor 'graphSurface_.updateFromState' 'Editor must update the graph from processor-owned product state.'
 
 # Band pages are real JUCE controls with released keyboard/exact-entry behavior.
@@ -315,14 +317,24 @@ Require-Text $capture 'const double gateDb = mode == MatchMode::Voice ? -55.0 : 
 Require-Text $capture 'return validSeconds(sampleRate) >= 0.35 && updateCounter >= 3;' 'Reference readiness rule changed.'
 Require-Text $capture 'workflowStepFromHostValue' 'REAPER/OSARA fractional Workflow behavior must remain explicit.'
 Require-Text $processor 'preserveLiveCapture' 'Same-rate host lifecycle must preserve live capture.'
-Reject-Text $processor 'referenceCapture_.release();' 'Host lifecycle must not discard a live Reference.'
+$preserveStart = $processor.IndexOf('if (preserveLiveCapture)')
+$preserveEnd = $processor.IndexOf('        else', $preserveStart)
+if ($preserveStart -lt 0 -or $preserveEnd -le $preserveStart) { throw 'Cannot isolate live capture preservation branch.' }
+$preserveCapture = $processor.Substring($preserveStart, $preserveEnd - $preserveStart)
+Reject-Text $preserveCapture 'release()' 'Same-rate live capture preservation must not release storage.'
+Reject-Text $preserveCapture '.reset()' 'Same-rate live capture preservation must not reset capture.'
 Require-Text $processor 'referenceReady_.load' 'Learn Target must use the published Reference readiness fact.'
 Require-Text $processor 'targetCorrectable_.load' 'Correct must use an atomic Target eligibility fact, not mutable capture memory.'
 Require-Text $processor 'Status::CannotSaveYet' 'Premature Learn accessible status missing.'
 Require-Text $processor 'setupLockedNotice_' 'Match Mode capture lock path missing.'
+Require-Text $stateTests 'testReferenceReportAtCaptureFull();' 'Reference report must be tested before Learn Target begins.'
 
 # Correct handoff: phase closes capture, writer count proves quiescence, worker copies later.
 Require-Text $processorHeader 'captureWriterCount_' 'Capture writer-count handoff is required.'
+Require-Text $processorHeader 'captureReaderCount_' 'Background capture reports require explicit read ownership.'
+Require-Text $processor 'referencePublishedPrefix_.store' 'Audio must publish a completed immutable prefix for reporting.'
+Require-Text $processor 'readers_.fetch_add' 'Reference report copy must enter read ownership before touching raw capture storage.'
+Require-Text $processor '~CaptureReadGuard()' 'Report storage pin must be released by RAII on every path.'
 Require-Text $processor 'captureWriterCount_.fetch_add' 'Audio block must enter capture ownership before reading phase.'
 Require-Text $processor 'captureWriterCount_.fetch_sub' 'Audio block must leave capture ownership deterministically.'
 Require-Text $processor 'phase_.store(tonetrace::capture::WorkflowPhase::Preview' 'Correct must leave capture phase before analysis.'
@@ -483,7 +495,7 @@ Require-Text $snapshotMain 'PEER_FAILURE' 'Snapshot diagnostics must distinguish
 Require-Text $snapshotMain 'LAYOUT_FAILURE' 'Snapshot diagnostics must distinguish layout failure.'
 Require-Text $snapshotMain 'peer=none-offscreen-supported' 'Snapshot diagnostics must record that a peer is optional for the supported offscreen path.'
 Require-Text $snapshotMain 'SNAPSHOT_DIAGNOSTICS.txt' 'Snapshot tool must emit detailed render diagnostics.'
-Require-Text $snapshotMain 'Tone Trace 1.1 visual snapshots' 'Snapshot manifests must identify the Tone Trace 1.1 validation output.'
+Require-Text $snapshotMain 'Tone Trace 1.2 visual snapshots' 'Snapshot manifests must identify the Tone Trace 1.2 validation output.'
 Require-Text $snapshotMain 'minimumWidth' 'Snapshot tool must cover minimum editor size.'
 Require-Text $snapshotMain 'defaultWidth' 'Snapshot tool must cover default editor size.'
 Require-Text $snapshotMain 'maximumWidth' 'Snapshot tool must cover maximum editor size.'
@@ -501,4 +513,13 @@ Require-Text $bandPages 'const int pageCount = (bandCount + capacity - 1) / capa
 Require-Text $bandPageTests 'expect(30, 30, {10, 10, 10});' '30-band 10/10/10 paging regression is missing.'
 Require-Text $bandPageTests 'expect(31, 30, {8, 8, 8, 7});' 'Balanced odd-resolution paging regression is missing.'
 
-Write-Host 'PASS: Tone Trace 1.1 source contract satisfied - JUCE radio-group page selector, one page-selection state, band/page navigation tones, Frozen navigation policy, processor state round-trip, released DSP, bypass, transfers, visual snapshots, and realtime guards present.'
+# Product speech must not call JUCE's Windows SAPI announcement implementation.
+Reject-Text $editor 'AccessibilityHandler::postAnnouncement' 'Editor must use the platform announcement bridge.'
+Reject-Text $readonly 'AccessibilityHandler::postAnnouncement' 'Readouts must use the platform announcement bridge.'
+$announcements = Read-Source 'src\platform\ToneTraceAnnouncements.cpp'
+Require-Text $announcements 'UiaRaiseNotificationEvent' 'Windows announcements must notify assistive technology.'
+Require-Text $announcements '#elif JUCE_MAC || JUCE_IOS' 'Apple announcements must remain platform guarded.'
+Require-Text $processor '~RestoreRelease()' 'Restore busy ownership must be exception safe.'
+
+Write-Host 'PASS: Tone Trace 1.2 source contract satisfied - JUCE radio-group page selector, one page-selection state, band/page navigation tones, Frozen navigation policy, processor state round-trip, released DSP, bypass, transfers, visual snapshots, and realtime guards present.'
+

@@ -11,6 +11,7 @@ void ToneTracePageSelector::setPages(const std::vector<juce::String>& names, int
 {
     const bool restoreSelectorFocus = focusIsInSelector();
 
+    overflowButton_.reset();
     buttons_.clear();
     selectedIndex_ = -1;
 
@@ -66,7 +67,7 @@ ToneTracePageSelector::PageButton::PageButton(ToneTracePageSelector& owner,
     setName(text);
     setTitle(text + " page selector");
     setDescription("Changes the visible Tone Trace editor page.");
-    setHelpText("This page selector group is one Tab stop. Left and Right change the selected page. Home selects the first page and End selects the last page. Tab moves into the selected page. Control+Tab and Control+Shift+Tab switch one page from the page currently visible.");
+    setHelpText("This page selector group is one Tab stop. Left and Right change the selected page. Home selects the first page and End selects the last page. Tab moves into the selected page. Control+Tab and Control+Shift+Tab switch one page from the page currently visible. Down opens the complete page menu.");
     setTooltip(getHelpText());
     setClickingTogglesState(true);
     setRadioGroupId(kRadioGroupId, juce::dontSendNotification);
@@ -99,6 +100,11 @@ bool ToneTracePageSelector::PageButton::keyPressed(const juce::KeyPress& key)
     if (modifiers.isCtrlDown() || modifiers.isAltDown() || modifiers.isCommandDown())
         return juce::TextButton::keyPressed(key);
 
+    if (key.getKeyCode() == juce::KeyPress::downKey)
+    {
+        owner_.showPageMenu();
+        return true;
+    }
     int target = owner_.selectedPage();
     const int count = owner_.pageCount();
     if (count <= 0)
@@ -163,6 +169,7 @@ bool ToneTracePageSelector::selectPage(int index, bool userInitiated, bool moveF
     const bool changed = selectedIndex_ != index;
     selectedIndex_ = index;
     updateButtonStates();
+    layoutButtons();
 
     if (moveFocusToSelector)
         buttons_[static_cast<std::size_t>(selectedIndex_)]->grabKeyboardFocus();
@@ -181,20 +188,53 @@ void ToneTracePageSelector::updateButtonStates()
 
 void ToneTracePageSelector::layoutButtons()
 {
-    if (buttons_.empty())
-        return;
-
-    auto area = bounds_;
-    int remainingWidth = area.getWidth();
-    const int count = pageCount();
-
-    for (int i = 0; i < count; ++i)
+    if (buttons_.empty()) return;
+    const int capacity = std::max(4, bounds_.getWidth() / 110);
+    const bool overflow = pageCount() > capacity;
+    if (overflow && overflowButton_ == nullptr)
     {
-        const int remainingButtons = count - i;
-        const int width = remainingButtons > 0 ? remainingWidth / remainingButtons : 0;
-        buttons_[static_cast<std::size_t>(i)]->setBounds(area.removeFromLeft(width));
-        remainingWidth -= width;
+        overflowButton_ = std::make_unique<juce::TextButton>("All pages...");
+        overflowButton_->setName("All pages");
+        overflowButton_->setDescription("Choose any page. Keyboard: Down on the selected page opens this menu.");
+        // The radio group remains one roving Tab stop. Its Down key opens the
+        // same accessible menu as this pointer shortcut.
+        overflowButton_->setWantsKeyboardFocus(false);
+        overflowButton_->onClick = [this] { showPageMenu(); };
+        parent_.addAndMakeVisible(*overflowButton_);
     }
+    if (overflowButton_ != nullptr) overflowButton_->setVisible(overflow);
+    const int bandSlots = capacity - 3; // Capture, Correction and menu are persistent.
+    const int firstBandPage = std::clamp(selectedIndex_ - bandSlots / 2, 2,
+                                        std::max(2, pageCount() - bandSlots));
+    std::vector<int> visible;
+    for (int i = 0; i < pageCount(); ++i)
+    {
+        const bool show = !overflow || i < 2 || (i >= firstBandPage && i < firstBandPage + bandSlots);
+        buttons_[static_cast<std::size_t>(i)]->setVisible(show);
+        if (show) visible.push_back(i);
+    }
+    auto area = bounds_;
+    int remaining = static_cast<int>(visible.size()) + (overflow ? 1 : 0);
+    for (int index : visible)
+    {
+        buttons_[static_cast<std::size_t>(index)]->setBounds(area.removeFromLeft(area.getWidth() / remaining));
+        --remaining;
+    }
+    if (overflow) overflowButton_->setBounds(area.reduced(2));
+}
+
+void ToneTracePageSelector::showPageMenu()
+{
+    if (buttons_.empty()) return;
+    juce::PopupMenu menu;
+    for (int i = 0; i < pageCount(); ++i)
+        menu.addItem(i + 1, buttons_[static_cast<std::size_t>(i)]->getButtonText(), true, i == selectedIndex_);
+    auto* anchor = buttons_[static_cast<std::size_t>(std::max(0, selectedIndex_))].get();
+    const auto safe = juce::Component::SafePointer<juce::TextButton>(anchor);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(anchor), [this, safe](int result)
+    {
+        if (safe != nullptr && result > 0) selectPage(result - 1, true, true);
+    });
 }
 
 bool ToneTracePageSelector::focusIsInSelector() const

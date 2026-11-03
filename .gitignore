@@ -1,19 +1,31 @@
 # Build output
-build-cmake/
 build/
 build-*/
+build-cmake/
 dist/
 graphify-out/
 
-# Platform builder artifacts (generated beside the builders)
+# Local release/audit work directories
+publish-*/
+release-*/
+
+# Platform builder artifacts
 ToneTrace_Windows_last_build.log
 ToneTrace_macOS_last_build.log
 *.sha256
+
+# Local verification output
+AUDIT_STATE.md
+AUDIT_FINDINGS_1.2.0.md
+visual-snapshots/
+*.log
 
 # CMake
 CMakeUserPresets.json
 CMakeCache.txt
 CMakeFiles/
+_deps/
+deps/
 
 # Compiled artifacts
 *.obj
@@ -35,6 +47,6 @@ CMakeFiles/
 .DS_Store
 Thumbs.db
 
-# Local logs and temporary files
-*.log
+# Temporary files
 *.tmp
+$out

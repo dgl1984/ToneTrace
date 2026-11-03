@@ -46,10 +46,12 @@ private:
     bool selectPage(int index, bool userInitiated, bool moveFocusToSelector);
     void updateButtonStates();
     void layoutButtons();
+    void showPageMenu();
     [[nodiscard]] bool focusIsInSelector() const;
 
     juce::Component& parent_;
     std::vector<std::unique_ptr<PageButton>> buttons_;
+    std::unique_ptr<juce::TextButton> overflowButton_;
     juce::Rectangle<int> bounds_;
     int selectedIndex_ = -1;
 
