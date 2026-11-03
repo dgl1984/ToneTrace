@@ -242,10 +242,16 @@ inline std::string formatContinuous(const ContinuousControlSpec& control,
     value = canonicalise(control, value);
     if (spec.releasedNumericId == 250 && value <= -59.5) return "Off";
     char digits[96] {};
+#if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 130300
+    const int written = std::snprintf(digits, sizeof(digits), "%.*f", control.decimalPlaces, value);
+    if (written <= 0 || written >= static_cast<int>(sizeof(digits))) return {};
+    std::string text(digits, static_cast<std::size_t>(written));
+#else
     const auto result = std::to_chars(digits, digits + sizeof(digits), value,
                                       std::chars_format::fixed, control.decimalPlaces);
     if (result.ec != std::errc {}) return {};
     std::string text(digits, result.ptr);
+#endif
     const auto decimal = text.find('.');
     if (decimal != std::string::npos)
         while (text.size() > decimal + 2 && text.back() == '0') text.pop_back();

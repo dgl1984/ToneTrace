@@ -107,3 +107,57 @@ jobs:
         run: cmake --build --preset linux-release --parallel
       - name: Test
         run: ctest --preset linux-release --output-on-failure
+
+  macos:
+    name: macOS Universal
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build, test, and package universal macOS plug-ins
+        run: bash BUILD_MACOS.sh
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: ToneTrace-macOS-Universal
+          path: build-macos/release/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Verify universal binaries
+        run: |
+          root="$PWD"
+          for bundle in "Tone Trace EQ.component" "Tone Trace EQ.vst3" "Tone Trace EQ.clap"; do
+            lipo "$root/build-macos/portable/ToneTrace/$bundle/Contents/MacOS/Tone Trace EQ" -verify_arch arm64 x86_64
+          done
+      - name: Install the packaged release and validate the Audio Unit
+        run: |
+          mount="$RUNNER_TEMP/ToneTrace-release"
+          mkdir -p "$mount"
+          hdiutil attach build-macos/release/ToneTrace_EQ_*_macOS_Universal.dmg -mountpoint "$mount" -nobrowse
+          sudo installer -pkg "$mount/Install Tone Trace EQ.pkg" -target /
+          hdiutil detach "$mount"
+          component="/Library/Audio/Plug-Ins/Components/Tone Trace EQ.component"
+          codesign --verify --strict --deep --verbose=2 "$component"
+          /usr/libexec/PlistBuddy -c 'Print :AudioComponents' "$component/Contents/Info.plist"
+          sudo killall -9 AudioComponentRegistrar || true
+          for attempt in {1..12}; do
+            auval -a > "$RUNNER_TEMP/au-components.txt"
+            if grep -E 'aufx[[:space:]]+TTRE[[:space:]]+Lane' "$RUNNER_TEMP/au-components.txt"; then
+              break
+            fi
+            sleep 5
+          done
+          cat "$RUNNER_TEMP/au-components.txt"
+          set -o pipefail
+          auval -v aufx TTRE Lane 2>&1 | tee AU_VALIDATION_LOG.txt
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: macOS-validation-logs
+          path: |
+            BUILD_MACOS_LOG.txt
+            AU_VALIDATION_LOG.txt
+            build-macos/Testing/Temporary/LastTest.log
+          retention-days: 7

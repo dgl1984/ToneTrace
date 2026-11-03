@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.25)
 
+# macOS releases are universal and must be configured before project().
+if(APPLE)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
+  set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS architectures")
+endif()
+
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" TONETRACE_VERSION
   LIMIT_COUNT 1)
 if(NOT TONETRACE_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
@@ -15,6 +21,10 @@ project(ToneTrace
   VERSION ${TONETRACE_VERSION}
   DESCRIPTION "Tone Trace matching engine and shared JUCE plug-in project"
   LANGUAGES CXX)
+
+if(APPLE)
+  enable_language(C)
+endif()
 
 include(CTest)
 include(GNUInstallDirs)
