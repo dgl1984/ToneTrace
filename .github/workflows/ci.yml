@@ -35,6 +35,7 @@ jobs:
           "TONETRACE_VERSION=$version" >> $env:GITHUB_ENV
           "TONETRACE_PACKAGE=ToneTrace_EQ_${version}_Windows_x64" >> $env:GITHUB_ENV
       - name: Stage Windows release package
+        id: package
         shell: pwsh
         run: |
           $source = (Get-Location).Path
@@ -66,6 +67,23 @@ jobs:
             "dist/$env:TONETRACE_PACKAGE.zip.sha256" -Encoding ascii
           "ZIP SHA-256: $hash"
           "### Windows package`n`nSHA-256: ``$hash``" >> $env:GITHUB_STEP_SUMMARY
+      - name: Validate packaged VST3
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        timeout-minutes: 12
+        shell: pwsh
+        run: ./tools/validate_windows_package.ps1 -Validator pluginval -StageDirectory "dist/$env:TONETRACE_PACKAGE"
+      - name: Validate packaged CLAP
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        timeout-minutes: 12
+        shell: pwsh
+        run: ./tools/validate_windows_package.ps1 -Validator clap-validator -StageDirectory "dist/$env:TONETRACE_PACKAGE"
+      - name: Upload validator reports
+        if: ${{ always() && steps.package.outcome == 'success' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: windows-validator-reports
+          path: dist/validator-reports/
+          if-no-files-found: warn
       - name: Upload Windows release package
         uses: actions/upload-artifact@v7.0.2
         with:
