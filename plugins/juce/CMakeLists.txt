@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.25)
 if(NOT DEFINED TONETRACE_VERSION)
-  set(TONETRACE_VERSION 1.1.0)
+  # Standalone plug-in builds fall back to the repository VERSION file so the
+  # version has a single source of truth. Standalone copies require an explicit version.
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../VERSION")
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../../VERSION" TONETRACE_VERSION
+      LIMIT_COUNT 1)
+  else()
+    message(FATAL_ERROR "Supply TONETRACE_VERSION when building outside the repository")
+  endif()
 endif()
 project(ToneTraceEQ VERSION ${TONETRACE_VERSION} LANGUAGES C CXX)
 
@@ -21,21 +28,30 @@ elseif (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/JUCE/CMakeLists.txt")
 else()
   FetchContent_Declare(juce
     GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-    GIT_TAG 8.0.12 GIT_SHALLOW TRUE)
+    GIT_TAG 29396c22c93392d6738e021b83196283d6e4d850)
   FetchContent_MakeAvailable(juce)
 endif()
 
-set(TONETRACE_RELEASE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tonetrace-1.0.5/include")
+# The repository root is the single canonical copy of the frozen 1.0.5
+# matching/realtime engine. SourceContractTests.ps1 pins these files by hash.
+set(TONETRACE_ENGINE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+set(TONETRACE_RELEASE_INCLUDE "${TONETRACE_ENGINE_ROOT}/include")
 set(TONETRACE_RELEASE_ENGINE
-  vendor/tonetrace-1.0.5/src/tonetrace_engine.cpp
-  vendor/tonetrace-1.0.5/src/tonetrace_describe.cpp
+  "${TONETRACE_ENGINE_ROOT}/src/tonetrace_engine.cpp"
+  "${TONETRACE_ENGINE_ROOT}/src/tonetrace_describe.cpp"
 )
 set(TONETRACE_RELEASE_REALTIME
-  vendor/tonetrace-1.0.5/src/tonetrace_realtime.cpp
+  "${TONETRACE_ENGINE_ROOT}/src/tonetrace_realtime.cpp"
 )
 
 set(TONETRACE_PLATFORM_SOURCES
   src/platform/ToneTraceStoppedTransportTone.cpp
+  src/platform/ToneTraceAnnouncements.cpp
+)
+
+set(TONETRACE_DESCRIPTION_SOURCES
+  src/ToneTracePreMatchCapture.cpp
+  src/controls/ToneTraceCurveDescriptionField.cpp
 )
 
 add_executable(ToneTraceProductCatalogTests tests/ProductCatalogTests.cpp)
@@ -128,8 +144,10 @@ juce_add_console_app(ToneTraceProcessorStateTests
 
 target_sources(ToneTraceProcessorStateTests PRIVATE
   tests/ProcessorStateTests.cpp
+  tests/AnnouncementTests.cpp
   src/PluginProcessor.cpp
   src/PluginEditor.cpp
+  ${TONETRACE_DESCRIPTION_SOURCES}
   src/capture/ToneTraceCaptureModel.cpp
   src/correction/ToneTraceCorrectionController.cpp
   src/tone/ToneTraceNotificationTone.cpp
@@ -157,6 +175,9 @@ target_include_directories(ToneTraceProcessorStateTests PRIVATE
 target_compile_definitions(ToneTraceProcessorStateTests PRIVATE
   TONETRACE_VISUAL_SNAPSHOT_BUILD=1
   TONETRACE_DISABLE_STOPPED_TRANSPORT_BEEP=1
+  # The state suite pumps the real editor message loop so asynchronous curve
+  # reports are covered end-to-end. Production builds keep JUCE defaults.
+  JUCE_MODAL_LOOPS_PERMITTED=1
   JUCE_WEB_BROWSER=0
   JUCE_USE_CURL=0
 )
@@ -192,6 +213,7 @@ juce_add_plugin(ToneTraceEQ
 target_sources(ToneTraceEQ PRIVATE
   src/PluginProcessor.cpp
   src/PluginEditor.cpp
+  ${TONETRACE_DESCRIPTION_SOURCES}
   src/capture/ToneTraceCaptureModel.cpp
   src/correction/ToneTraceCorrectionController.cpp
   src/tone/ToneTraceNotificationTone.cpp
@@ -301,6 +323,7 @@ target_sources(ToneTraceVisualSnapshots PRIVATE
   tools/VisualSnapshotMain.cpp
   src/PluginProcessor.cpp
   src/PluginEditor.cpp
+  ${TONETRACE_DESCRIPTION_SOURCES}
   src/capture/ToneTraceCaptureModel.cpp
   src/correction/ToneTraceCorrectionController.cpp
   src/tone/ToneTraceNotificationTone.cpp
@@ -342,3 +365,10 @@ target_link_libraries(ToneTraceVisualSnapshots PRIVATE
 )
 
 juce_generate_juce_header(ToneTraceVisualSnapshots)
+
+if(WIN32)
+  foreach(target ToneTraceEQ ToneTraceProcessorStateTests ToneTraceVisualSnapshots)
+    target_link_libraries(${target} PRIVATE uiautomationcore oleaut32)
+  endforeach()
+endif()
+

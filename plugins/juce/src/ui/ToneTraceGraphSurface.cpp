@@ -1,8 +1,19 @@
 #include "ToneTraceGraphSurface.h"
 #include "ToneTraceDesignSystem.h"
-
 #include <array>
 #include <cmath>
+
+namespace
+{
+constexpr double lowHz = 10.0, highHz = 30000.0;
+const juce::Colour targetColour = juce::Colour::fromRGB(100, 170, 240);
+double meanOf(const auto& points)
+{
+    double sum = 0.0;
+    for (const auto& point : points) sum += point.valueDb;
+    return points.empty() ? 0.0 : sum / static_cast<double>(points.size());
+}
+}
 
 ToneTraceGraphSurface::ToneTraceGraphSurface()
 {
@@ -11,73 +22,84 @@ ToneTraceGraphSurface::ToneTraceGraphSurface()
     setInterceptsMouseClicks(true, false);
 }
 
+juce::Rectangle<float> ToneTraceGraphSurface::plotBounds() const
+{
+    return getLocalBounds().toFloat().withTrimmedLeft(48).withTrimmedRight(26)
+        .withTrimmedTop(34).withTrimmedBottom(36);
+}
+
+float ToneTraceGraphSurface::xFor(double hz) const
+{
+    const auto plot = plotBounds();
+    return plot.getX() + static_cast<float>(std::log(std::clamp(hz, lowHz, highHz) / lowHz)
+        / std::log(highHz / lowHz)) * plot.getWidth();
+}
+
 void ToneTraceGraphSurface::mouseMove(const juce::MouseEvent& event)
 {
-    const auto plot = getLocalBounds().toFloat().reduced(18.0f, 30.0f);
-    if (plot.getWidth() <= 0.0f) return;
-    const double fraction = juce::jlimit(0.0, 1.0,
-        static_cast<double>((event.position.x - plot.getX()) / plot.getWidth()));
-    cursorHz_ = 20.0 * std::pow(1000.0, fraction);
+    const auto plot = plotBounds();
+    if (plot.getWidth() <= 0) return;
+    const double fraction = std::clamp(static_cast<double>((event.position.x - plot.getX()) / plot.getWidth()), 0.0, 1.0);
+    cursorHz_ = lowHz * std::pow(highHz / lowHz, fraction);
     if (onInspectFrequency) onInspectFrequency(cursorHz_);
     repaint();
 }
 
-void ToneTraceGraphSurface::mouseExit(const juce::MouseEvent&)
-{
-    cursorHz_ = 0.0;
-    repaint();
-}
+void ToneTraceGraphSurface::mouseExit(const juce::MouseEvent&) { setTraceFrequency(0.0); }
+void ToneTraceGraphSurface::setTraceFrequency(double hz) { cursorHz_ = hz; repaint(); }
+void ToneTraceGraphSurface::resized() { rebuildPaths(); }
 
-void ToneTraceGraphSurface::setTraceFrequency(double frequencyHz)
-{
-    cursorHz_ = frequencyHz;
-    repaint();
-}
-
-void ToneTraceGraphSurface::updateFromState(
-    const tonetrace::ProfileSnapshot* snapshot,
-    const tonetrace::IrRenderSettings& renderSettings,
-    double maximumCorrectionDb)
+void ToneTraceGraphSurface::updateFromState(const tonetrace::ProfileSnapshot* snapshot,
+    const tonetrace::IrRenderSettings& settings, double maximumCorrectionDb)
 {
     reference_.clear(); target_.clear(); correction_.clear();
     if (snapshot != nullptr)
     {
-        reference_.reserve(snapshot->reference.points.size());
-        target_.reserve(snapshot->target.points.size());
         for (const auto& p : snapshot->reference.points)
             if (std::isfinite(p.frequencyHz) && std::isfinite(p.levelDb)) reference_.push_back({p.frequencyHz, p.levelDb});
         for (const auto& p : snapshot->target.points)
             if (std::isfinite(p.frequencyHz) && std::isfinite(p.levelDb)) target_.push_back({p.frequencyHz, p.levelDb});
     }
-
-    constexpr int samples = 240;
-    correction_.reserve(samples);
-    const double low = snapshot != nullptr
-        ? std::max(20.0, snapshot->uncappedModel.analysisLowHz) : 20.0;
-    const double high = snapshot != nullptr
-        ? std::min(20000.0, snapshot->uncappedModel.analysisHighHz) : 20000.0;
-    const bool manualOnly = snapshot == nullptr && tonetrace::hasManualCorrection(renderSettings);
-    if (high > low && (snapshot != nullptr || manualOnly))
-    {
+    constexpr int samples = 320;
+    if (snapshot != nullptr || tonetrace::hasManualCorrection(settings))
         for (int i = 0; i < samples; ++i)
         {
-            const double t = static_cast<double>(i) / static_cast<double>(samples - 1);
-            const double hz = low * std::pow(high / low, t);
-            double value = renderSettings.correctionGainDb;
-            if (snapshot != nullptr)
-            {
-                value = tonetrace::evaluateCorrectionAt(
-                    snapshot->uncappedModel, maximumCorrectionDb, renderSettings, hz).outputDb;
-            }
-            else if (hz >= renderSettings.rangeLowHz && hz <= renderSettings.rangeHighHz)
-            {
-                value += tonetrace::manualGainDbAt(
-                    hz, renderSettings.manualGains, 20.0, 20000.0);
-            }
-            correction_.push_back({hz, value});
+            const double hz = lowHz * std::pow(highHz / lowHz, static_cast<double>(i) / (samples - 1));
+            correction_.push_back({hz, tonetrace::ui::displayedCorrectionDb(snapshot, settings, maximumCorrectionDb, hz)});
         }
+    rangeDb_ = 12.0;
+    for (const auto* curve : { &reference_, &target_ })
+    {
+        const double mean = meanOf(*curve);
+        for (const auto& p : *curve) rangeDb_ = std::max(rangeDb_, std::abs(p.valueDb - mean));
     }
+    for (const auto& p : correction_) rangeDb_ = std::max(rangeDb_, std::abs(p.valueDb));
+    rangeDb_ = std::ceil(rangeDb_ / 6.0) * 6.0;
+    rebuildPaths();
     repaint();
+}
+
+void ToneTraceGraphSurface::rebuildPaths()
+{
+    const auto plot = plotBounds();
+    const auto build = [&](const auto& points, juce::Path& path, double offset)
+    {
+        path.clear();
+        bool started = false;
+        for (const auto& p : points)
+        {
+            if (p.frequencyHz < lowHz || p.frequencyHz > highHz) continue;
+            const auto x = xFor(p.frequencyHz);
+            const auto y = plot.getCentreY() - static_cast<float>((p.valueDb - offset) / (2.0 * rangeDb_)) * plot.getHeight();
+            if (!started) { path.startNewSubPath(x, y); started = true; }
+            else path.lineTo(x, y);
+        }
+    };
+    build(reference_, referencePath_, meanOf(reference_));
+    build(target_, targetPath_, meanOf(target_));
+    const float dashes[] {4, 3};
+    juce::PathStrokeType(1.4f).createDashedStroke(dashedTargetPath_, targetPath_, dashes, 2);
+    build(correction_, correctionPath_, 0.0);
 }
 
 void ToneTraceGraphSurface::paint(juce::Graphics& g)
@@ -88,94 +110,63 @@ void ToneTraceGraphSurface::paint(juce::Graphics& g)
     g.fillRoundedRectangle(bounds, spacing::cornerRadius);
     g.setColour(colour::border);
     g.drawRoundedRectangle(bounds.reduced(0.5f), spacing::cornerRadius, 1.0f);
+    const auto plot = plotBounds();
+    if (plot.getWidth() < 80 || plot.getHeight() < 30) return;
 
-    auto plot = bounds.reduced(18.0f, 30.0f);
-    if (plot.getWidth() < 80.0f || plot.getHeight() < 80.0f) return;
-
-    g.setColour(colour::grid);
-    constexpr std::array<double, 10> frequencies {{ 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 }};
-    for (const auto frequency : frequencies)
+    // Label the three traces individually; width and dash pattern also distinguish them.
+    auto legend = bounds.reduced(14, 5).removeFromTop(24);
+    const auto item = [&](const juce::String& label, juce::Colour c, bool dashed, float width)
     {
-        const auto normalised = std::log(frequency / 20.0) / std::log(20000.0 / 20.0);
-        const auto x = plot.getX() + static_cast<float>(normalised) * plot.getWidth();
+        auto cell = legend.removeFromLeft(width);
+        const auto y = cell.getCentreY();
+        g.setColour(c);
+        if (dashed) { const float dashes[] { 4, 3 }; g.drawDashedLine({cell.getX(), y, cell.getX()+20, y}, dashes, 2); }
+        else g.drawLine(cell.getX(), y, cell.getX()+20, y, 2);
+        g.setFont(type::small());
+        g.drawText(label, cell.withTrimmedLeft(26), juce::Justification::centredLeft);
+    };
+    item("Reference", colour::warning, false, 115);
+    item("Target", targetColour, true, 95);
+    item("Correction + gain", colour::accentStrong, false, 165);
+    g.setColour(colour::mutedText);
+    g.drawText("Auto scale (dB)", legend, juce::Justification::centredRight);
+
+    constexpr std::array<double, 9> frequencies {10, 30, 100, 300, 1000, 3000, 10000, 20000, 30000};
+    for (double hz : frequencies)
+    {
+        const float x = xFor(hz);
+        g.setColour(colour::grid);
         g.drawVerticalLine(static_cast<int>(std::lround(x)), plot.getY(), plot.getBottom());
+        // Avoid colliding 20k/30k labels in compact layouts.
+        if (hz == 20000 && plot.getWidth() < 900) continue;
+        const auto label = hz >= 1000 ? juce::String(hz / 1000, 0) + "k" : juce::String(hz, 0);
+        g.setColour(colour::mutedText);
+        g.drawText(label, juce::Rectangle<float>(x-19, plot.getBottom()+1, 38, 16), juce::Justification::centred);
     }
-    for (int i = 0; i <= 6; ++i)
+    const int divisions = plot.getHeight() < 110 ? 2 : 4;
+    for (int i = 0; i <= divisions; ++i)
     {
-        const auto y = plot.getY() + plot.getHeight() * static_cast<float>(i) / 6.0f;
+        const float y = plot.getY() + plot.getHeight() * static_cast<float>(i) / divisions;
+        const double db = rangeDb_ * (1.0 - 2.0 * i / divisions);
+        g.setColour(i == divisions/2 ? colour::border : colour::grid);
         g.drawHorizontalLine(static_cast<int>(std::lround(y)), plot.getX(), plot.getRight());
+        g.setColour(colour::mutedText);
+        g.drawText((db > 0 ? "+" : "") + juce::String(db, 0),
+            juce::Rectangle<float>(2, y-8, 40, 16), juce::Justification::centredRight);
     }
-
-    const auto xFor = [&plot](double hz)
-    {
-        const double f = std::clamp(hz, 20.0, 20000.0);
-        return plot.getX() + static_cast<float>(std::log(f / 20.0) / std::log(1000.0)) * plot.getWidth();
-    };
-    const auto meanOf = [](const std::vector<Point>& points)
-    {
-        double mean = 0.0;
-        for (const auto& point : points) mean += point.valueDb;
-        return points.empty() ? 0.0 : mean / static_cast<double>(points.size());
-    };
-    double rangeDb = 12.0;
-    for (const auto* curve : { &reference_, &target_ })
-    {
-        const double mean = meanOf(*curve);
-        for (const auto& point : *curve) rangeDb = std::max(rangeDb, std::abs(point.valueDb - mean));
-    }
-    for (const auto& point : correction_) rangeDb = std::max(rangeDb, std::abs(point.valueDb));
-    rangeDb = std::ceil(rangeDb / 6.0) * 6.0;
-    // Spectrum traces are normalized independently to show shape rather than absolute capture level.
-    const auto drawSpectrum = [&](const std::vector<Point>& points, juce::Colour c)
-    {
-        if (points.size() < 2) return;
-        double mean = 0.0; for (const auto& p : points) mean += p.valueDb; mean /= static_cast<double>(points.size());
-        juce::Path path; bool started = false;
-        for (const auto& p : points)
-        {
-            if (p.frequencyHz < 20.0 || p.frequencyHz > 20000.0) continue;
-            const float y = plot.getCentreY() - static_cast<float>((p.valueDb - mean) / (2.0 * rangeDb)) * plot.getHeight();
-            const float x = xFor(p.frequencyHz);
-            if (!started) { path.startNewSubPath(x, y); started = true; } else path.lineTo(x, y);
-        }
-        g.setColour(c); g.strokePath(path, juce::PathStrokeType(1.4f));
-    };
-    const auto drawCorrection = [&]
-    {
-        if (correction_.size() < 2) return;
-        juce::Path path; bool started = false;
-        for (const auto& p : correction_)
-        {
-            const float y = plot.getCentreY() - static_cast<float>(p.valueDb / (2.0 * rangeDb)) * plot.getHeight();
-            const float x = xFor(p.frequencyHz);
-            if (!started) { path.startNewSubPath(x, y); started = true; } else path.lineTo(x, y);
-        }
-        g.setColour(colour::accentStrong); g.strokePath(path, juce::PathStrokeType(2.2f));
-    };
-
-    drawSpectrum(reference_, colour::warning);
-    drawSpectrum(target_, juce::Colour::fromRGB(100, 170, 240));
-    drawCorrection();
-
-    if (cursorHz_ > 0.0)
+    g.setColour(colour::warning); g.strokePath(referencePath_, juce::PathStrokeType(1.4f));
+    g.setColour(targetColour);
+    const float dashes[] {4, 3};
+    g.fillPath(dashedTargetPath_);
+    g.setColour(colour::accentStrong); g.strokePath(correctionPath_, juce::PathStrokeType(2.2f));
+    if (cursorHz_ > 0)
     {
         const float x = xFor(cursorHz_);
         g.setColour(colour::focus);
-        const float dashes[] { 3.0f, 3.0f };
-        g.drawDashedLine({ x, plot.getY(), x, plot.getBottom() }, dashes, 2);
-        g.setFont(type::small());
-        g.drawText(juce::String(cursorHz_, 0) + " Hz",
-            juce::Rectangle<float>(juce::jlimit(plot.getX(), plot.getRight() - 90.0f, x + 5.0f), plot.getY(), 90.0f, 20.0f),
-            juce::Justification::centredLeft);
+        g.drawDashedLine({x, plot.getY(), x, plot.getBottom()}, dashes, 2);
     }
-
-    g.setColour(colour::accent);
-    g.drawHorizontalLine(static_cast<int>(std::lround(plot.getCentreY())), plot.getX(), plot.getRight());
-    g.setFont(type::section()); g.setColour(colour::text);
-    g.drawText("Reference / Target / Correction", bounds.reduced(16.0f).removeFromTop(20.0f), juce::Justification::centredLeft);
-    g.setFont(type::small());
-    g.drawText("+/- " + juce::String(rangeDb, 0) + " dB", bounds.reduced(16.0f).removeFromTop(20.0f), juce::Justification::centredRight);
-    g.setFont(type::small()); g.setColour(colour::mutedText);
-    g.drawText(correction_.empty() ? "Capture and correct to display learned curves." : "Reference and Target show spectral shape; Correction is centered on 0 dB.",
-               bounds.reduced(16.0f).removeFromBottom(20.0f), juce::Justification::centredLeft);
+    g.setColour(colour::mutedText);
+    g.drawText(correction_.empty() ? "Hz | Capture a Reference to begin. Manual EQ is available on Bands."
+        : "Hz | Spectra: relative to each mean. Correction: output dB including gain.",
+        bounds.reduced(14, 1).removeFromBottom(16), juce::Justification::centredLeft);
 }

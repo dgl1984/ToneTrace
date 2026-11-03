@@ -443,6 +443,57 @@ void testBandDisplaySnapshotConsistency()
     }
     require(near(bands.limitDb, processor.bandLimitDb(), 1.0e-8),
             "band display snapshot limit disagrees with processor");
+
+    // Manual-only correction still installs a real FIR kernel. The host must see
+    // its tail length so latency compensation matches what is actually rendering.
+    const auto tailDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (processor.getTailLengthSeconds() <= 0.0
+           && std::chrono::steady_clock::now() < tailDeadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    require(processor.getTailLengthSeconds() > 0.0,
+            "manual-only correction reported zero tail length while an FIR was active");
+    processor.releaseResources();
+}
+
+void testRepeatedWorkflowStepRestartsCapture()
+{
+    ToneTraceProcessor processor;
+    processor.prepareToPlay(48000.0, 512);
+    processor.setToggleFromUi(tonetrace::product::kToneNotificationsIndex, false);
+    juce::AudioBuffer<float> block(2, 512);
+    juce::MidiBuffer midi;
+    const auto feed = [&](int blocks)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int i = 0; i < block.getNumSamples(); ++i)
+            {
+                const double t = static_cast<double>(b * block.getNumSamples() + i) / 48000.0;
+                const auto x = static_cast<float>(0.2 * std::sin(
+                    2.0 * juce::MathConstants<double>::pi * 440.0 * t));
+                block.setSample(0, i, x);
+                block.setSample(1, i, x);
+            }
+            processor.processBlock(block, midi);
+        }
+    };
+
+    processor.setWorkflowFromUi(1);
+    require(processor.workflowStep() == 1, "Capture Reference did not enter step 1");
+    feed(40);
+    const auto before = processor.captureSeconds();
+    require(before > 0.2, "live Reference capture did not accumulate audio");
+    require(processor.exportableReference().has_value(),
+            "a ready live Reference was not reportable during Reference capture");
+
+    // An explicit second press of the same UI command must restart the
+    // capture. Host automation still ignores a stationary parameter value.
+    processor.setWorkflowFromUi(1);
+    require(processor.workflowStep() == 1,
+            "repeated Capture Reference changed the visible workflow step");
+    feed(2);
+    require(processor.captureSeconds() < before,
+            "repeated Capture Reference did not restart the capture");
     processor.releaseResources();
 }
 
@@ -462,6 +513,29 @@ void testTransferParity()
     require(!rangeGuard.importModel(narrowModel(1000.0, 1500.0, 2000.0)).ok,
             "model import ignored the active correction range");
     rangeGuard.releaseResources();
+
+    // A curve that the released project-state reader cannot load must be
+    // rejected at import time instead of appearing to save successfully and
+    // then failing on the next project open.
+    ToneTraceProcessor capGuard;
+    capGuard.prepareToPlay(48000.0, 512);
+    auto oversizedCurve = makeSpectrum(20.0, 1000.0, 20000.0, 0.0, 0.0, 0.0);
+    oversizedCurve.points.clear();
+    oversizedCurve.points.reserve(100001);
+    for (int index = 0; index < 100001; ++index)
+        oversizedCurve.points.push_back({
+            20.0 + static_cast<double>(index) * 0.19, 0.0, 0.9, 0.0 });
+    const auto oversizedReference = capGuard.importReference(oversizedCurve);
+    require(!oversizedReference.ok
+                && oversizedReference.message.containsIgnoreCase("too many points"),
+            "oversized Reference import was not rejected before it could break state reload");
+    require(!capGuard.importTarget(oversizedCurve).ok,
+            "oversized Target import was not rejected before it could break state reload");
+    auto oversizedResolution = flatFrozenModel();
+    oversizedResolution.resolution = 4096;
+    require(!capGuard.importModel(oversizedResolution).ok,
+            "model import accepted a band count the project state cannot reload");
+    capGuard.releaseResources();
 
     // Importing a Reference is a new Target-capture transaction and must clear
     // stale live telemetry exactly as 1.0.5 does.
@@ -486,6 +560,10 @@ void testTransferParity()
     require(telemetry.captureSeconds() > 0.0, "live Reference did not publish capture telemetry");
     const auto reference = makeSpectrum(100.0, 1000.0, 10000.0, 0.0, 0.0, 0.0);
     require(telemetry.importReference(reference).ok, "valid Reference import failed");
+    const auto firstReferenceRevision = telemetry.reportRevision();
+    require(telemetry.importReference(reference).ok, "repeated Reference import failed");
+    require(telemetry.reportRevision() > firstReferenceRevision,
+            "repeated Reference import did not signal a report refresh");
     require(near(telemetry.captureSeconds(), 0.0)
                 && near(telemetry.captureConfidence(), 0.0)
                 && near(telemetry.curveDriftDb(), 60.0),
@@ -497,8 +575,14 @@ void testTransferParity()
     ToneTraceProcessor pair;
     pair.prepareToPlay(48000.0, 512);
     const auto target = makeSpectrum(100.0, 1000.0, 10000.0, -2.0, 3.0, -1.0);
+    const auto beforePairReference = pair.reportRevision();
     require(pair.importReference(reference).ok, "pair Reference import failed");
+    require(pair.reportRevision() > beforePairReference,
+            "Reference import did not signal a report refresh");
+    const auto beforePairTarget = pair.reportRevision();
     require(pair.importTarget(target).ok, "pair Target import failed");
+    require(pair.reportRevision() > beforePairTarget,
+            "Target import did not signal a report refresh");
     const auto pairDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (!pair.profileActive() && std::chrono::steady_clock::now() < pairDeadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -542,6 +626,94 @@ void testTransferParity()
     require(recapturedSnapshot != nullptr && recapturedSnapshot->target.fftSize > 1,
             "Target recapture reused the old imported Target instead of live audio");
     recapture.releaseResources();
+}
+
+void testReferenceReportAtCaptureFull(bool fillBuffer = true)
+{
+    ToneTraceProcessor processor;
+    processor.prepareToPlay(48000.0, 512);
+    processor.setToggleFromUi(tonetrace::product::kToneNotificationsIndex, false);
+    ToneTraceEditor editor(processor);
+
+    juce::TextEditor* description = nullptr;
+    for (auto* child : editor.getChildren())
+        if (child->getName() == "Curve Description")
+            description = dynamic_cast<juce::TextEditor*>(child);
+    require(description != nullptr, "curve description field missing from editor");
+
+    juce::AudioBuffer<float> block(2, 512);
+    juce::MidiBuffer midi;
+    const auto feed = [&](int blocks, double lowHz = 220.0)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int i = 0; i < block.getNumSamples(); ++i)
+            {
+                const double t = static_cast<double>(b * block.getNumSamples() + i) / 48000.0;
+                const auto x = static_cast<float>(
+                    0.18 * std::sin(2.0 * juce::MathConstants<double>::pi * lowHz * t)
+                    + 0.08 * std::sin(2.0 * juce::MathConstants<double>::pi * 3300.0 * t));
+                block.setSample(0, i, x);
+                block.setSample(1, i, x);
+            }
+            processor.processBlock(block, midi);
+        }
+    };
+
+    processor.setWorkflowFromUi(1);
+    feed(fillBuffer ? 3000 : 150);
+    require(processor.captureSeconds() > 1.0, "Reference capture did not accumulate audio");
+    require((processor.statusCode() == static_cast<int>(tonetrace::capture::Status::CaptureFull)) == fillBuffer,
+            "Reference capture did not reach the full-capture state");
+
+    // The report is useful on its own. Reaching Capture Full must be enough to
+    // produce it; the user must not have to press Learn Target or begin a Target
+    // capture merely to inspect the completed Reference spectrum.
+    require(processor.workflowStep() == 1,
+            "Reference report test advanced workflow before checking the completed capture");
+
+    bool ready = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+        const auto text = description->getText();
+        if (text.startsWith("Reference\n") && !text.contains("being prepared")
+            && !text.contains("unavailable"))
+        {
+            ready = true;
+            break;
+        }
+    }
+    require(ready, "Reference report did not reach the field at Reference Capture Full");
+
+    if (!fillBuffer)
+    {
+        const auto firstReport = description->getText();
+        feed(150, 880.0);
+        bool refreshed = false;
+        const auto refreshDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (std::chrono::steady_clock::now() < refreshDeadline)
+        {
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+            const auto text = description->getText();
+            if (text.startsWith("Reference\n") && text != firstReport)
+            {
+                refreshed = true;
+                break;
+            }
+        }
+        require(refreshed, "Short Reference report did not refresh after more audio and stopped playback");
+        require(processor.workflowStep() == 1, "Reporting changed the capture workflow");
+    }
+    // Advancing afterward must keep the already-useful report available; Learn
+    // Target is a workflow action, not a prerequisite for the Reference summary.
+    processor.setWorkflowFromUi(2);
+    feed(2);
+    require(processor.workflowStep() == 2, "Learn Target did not enter step 2");
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+    require(description->getText().startsWith("Reference\n"),
+            "Reference report disappeared when Target capture began");
 }
 
 void testRestoredEditorControls()
@@ -589,9 +761,171 @@ void testRestoredEditorControls()
 }
 }
 
+void testAuditRegressions()
+{
+    using namespace tonetrace::product;
+    ToneTraceProcessor processor;
+    processor.prepareToPlay(48000.0, 256);
+    require(processor.captureStorageBytes() == 0, "Idle processor allocated raw capture storage");
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+    require(processor.captureStorageBytes() == 0, "Control timer eagerly allocated capture storage");
+    ToneTraceProcessor deferred;
+    deferred.setWorkflowFromUi(1);
+    deferred.prepareToPlay(48000.0, 256);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+    require(deferred.captureActive() && deferred.captureStorageBytes() > 0,
+        "Capture requested before prepare did not resume after audio preparation");
+    require(processor.importModel(flatFrozenModel()).ok, "audit model import failed");
+    require(processor.captureStorageBytes() == 0, "Frozen model allocated unused capture storage");
+    processor.setContinuousFromUi(kCorrectionGainIndex, 6.0);
+    auto snapshot = processor.profileSnapshotCopy();
+    auto render = processor.graphRenderSettings();
+    require(near(tonetrace::ui::displayedCorrectionDb(snapshot.get(), render,
+        processor.graphMaximumCorrectionDb(), 1000.0), 6.0), "Graph/readout lost output gain");
+    render.manualGains.assign(30, 0.0);
+    require(near(tonetrace::ui::displayedCorrectionDb(nullptr, render, 18.0, 1000.0), 6.0),
+        "Manual graph/readout lost output gain");
+
+    require(processor.continuousParameter(kCorrectionGainIndex).isAutomatable(), "Output gain automation disabled");
+    require(processor.toggleParameter(kBypassIndex).isAutomatable(), "Bypass automation disabled");
+    require(!processor.continuousParameter(kCorrectionStrengthIndex).isAutomatable(), "Async strength advertised as realtime automation");
+    require(!processor.matchModeParameter().isAutomatable(), "Async mode advertised as realtime automation");
+    require(!processor.workflowParameter().isAutomatable(), "Workflow commands advertised as realtime automation");
+
+    ToneTraceEditor editor(processor);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+    juce::TextEditor* readout = nullptr;
+    ToneTraceGraphSurface* graph = nullptr;
+    for (auto* child : editor.getChildren())
+    {
+        if (child->getName() == "Curve Readout") readout = dynamic_cast<juce::TextEditor*>(child);
+        if (auto* surface = dynamic_cast<ToneTraceGraphSurface*>(child)) graph = surface;
+    }
+    require(readout != nullptr && graph != nullptr, "Graph/readout controls unavailable");
+    graph->onInspectFrequency(1000.0);
+    require(readout->getText().contains("Correction + gain 6.000 dB"), "Actual pointer readout disagrees with graph gain");
+
+    // Compare identical audio with and without concurrent report extraction.
+    // Accepted time must not depend on whether someone is reading the report.
+    ToneTraceProcessor control, reporting;
+    for (auto* p : { &control, &reporting })
+    {
+        p->prepareToPlay(48000.0, 256);
+        p->setToggleFromUi(kToneNotificationsIndex, false);
+        p->setWorkflowFromUi(1);
+        require(p->captureStorageBytes() == 48000ULL * 30 * 4 * sizeof(float),
+            "Capture request did not provision its bounded storage");
+    }
+    juce::AudioBuffer<float> block(2, 256);
+    juce::MidiBuffer midi;
+    const auto feed = [&]
+    {
+        for (auto* p : { &control, &reporting })
+        {
+            for (int channel = 0; channel < 2; ++channel)
+                juce::FloatVectorOperations::fill(block.getWritePointer(channel), 0.1f, 256);
+            p->processBlock(block, midi);
+        }
+    };
+    for (int i = 0; i < 500; ++i) feed();
+    require(reporting.referenceReady(), "Report concurrency fixture not ready");
+    std::atomic<bool> started { false };
+    std::atomic<int> reports { 0 };
+    std::thread reader([&]
+    {
+        started.store(true);
+        for (int i = 0; i < 5; ++i)
+            if (reporting.exportableReference().has_value()) reports.fetch_add(1);
+    });
+    while (!started.load()) std::this_thread::yield();
+    for (int i = 0; i < 2000; ++i) feed();
+    reader.join();
+    require(reports.load() == 5, "Concurrent reports failed");
+    require(near(control.captureSeconds(), reporting.captureSeconds(), 1.0e-9),
+        "Concurrent report dropped capture frames");
+}
+
+void testScreenReaderAnnouncements();
+
+void testRestoreExceptionRecovery()
+{
+    ToneTraceProcessor source, restored;
+    source.prepareToPlay(48000.0, 256);
+    restored.prepareToPlay(48000.0, 256);
+    juce::MemoryBlock state;
+    source.getStateInformation(state);
+    struct ThrowingListener final : juce::AudioProcessorParameter::Listener
+    {
+        void parameterValueChanged(int, float) override { throw std::runtime_error("host listener failure"); }
+        void parameterGestureChanged(int, bool) override {}
+    } listener;
+    auto& parameter = restored.continuousParameter(0);
+    parameter.addListener(&listener);
+    bool threw = false;
+    try { restored.restoreState(state.getData(), static_cast<int>(state.getSize())); }
+    catch (const std::runtime_error&) { threw = true; }
+    parameter.removeListener(&listener);
+    require(threw, "restore failure fixture did not throw");
+    restored.setWorkflowFromUi(1);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+    require(restored.captureActive(), "restore exception left workflow permanently busy");
+}
+
+void testRevisionRefresh()
+{
+    ToneTraceProcessor processor;
+    processor.prepareToPlay(48000.0, 256);
+    require(processor.importModel(flatFrozenModel()).ok, "revision fixture import failed");
+    ToneTraceEditor editor(processor);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+    juce::TextEditor* readout = nullptr;
+    ToneTraceGraphSurface* graph = nullptr;
+    for (auto* child : editor.getChildren())
+    {
+        if (child->getName() == "Curve Readout") readout = dynamic_cast<juce::TextEditor*>(child);
+        if (auto* surface = dynamic_cast<ToneTraceGraphSurface*>(child)) graph = surface;
+    }
+    require(readout && graph, "revision fixture controls missing");
+    auto model = flatFrozenModel();
+    for (auto& band : model.nodes) band.gainDb = 3.0;
+    // Same workflow and parameter values: only the committed model changes.
+    require(processor.importModel(model).ok, "replacement model import failed");
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(150);
+    graph->onInspectFrequency(1000.0);
+    require(readout->getText().contains("Correction + gain 3.000 dB"),
+            "editor retained stale model without a parameter change");
+}
+
+void testConcurrentHostParameterChanges()
+{
+    ToneTraceProcessor processor;
+    processor.prepareToPlay(96000.0, 1024);
+    ToneTraceEditor editor(processor);
+    editor.addToDesktop(0);
+    editor.setVisible(true);
+    std::atomic<bool> finished { false };
+    std::jthread automation([&]
+    {
+        juce::Random random(42712);
+        for (int block = 0; block < 100; ++block)
+        {
+            for (auto* parameter : processor.getParameters())
+                parameter->setValueNotifyingHost(random.nextFloat());
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        finished.store(true);
+    });
+    while (!finished.load())
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
+    automation.join();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+    editor.removeFromDesktop();
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI gui;
+    testConcurrentHostParameterChanges();
     using namespace tonetrace::product;
 
     ToneTraceProcessor source;
@@ -748,9 +1082,16 @@ int main()
     navigation.releaseResources();
 
     testImportedReferenceWithLiveTarget();
+    testRepeatedWorkflowStepRestartsCapture();
     testTransferParity();
     testBandDisplaySnapshotConsistency();
+    testReferenceReportAtCaptureFull(false);
+    testReferenceReportAtCaptureFull();
     testRestoredEditorControls();
+    testAuditRegressions();
+    testRestoreExceptionRecovery();
+    testRevisionRefresh();
+    testScreenReaderAnnouncements();
 
     std::cout << "PASS: processor state round-trip plus Frozen navigation-tone policy\n";
     return 0;

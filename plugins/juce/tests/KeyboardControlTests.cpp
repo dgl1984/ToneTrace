@@ -192,6 +192,21 @@ int main()
         || pageCallbackCount != 1 || !lastPageWasUser)
         return fail("relative page navigation did not wrap exactly one page");
 
+    std::vector<juce::String> manyPages { "Capture and transfer", "Correction controls" };
+    for (int i = 0; i < 15; ++i) manyPages.push_back("Bands " + juce::String(i * 8 + 1) + "–" + juce::String(i * 8 + 8));
+    pages.setPages(manyPages, 0);
+    pages.setBounds({0, 0, 692, 32});
+    for (int i = 0; i < 17; ++i)
+    {
+        pages.selectPageProgrammatically(i);
+        bool selectedVisible = false;
+        for (auto* child : pageParent.getChildren())
+            if (auto* button = dynamic_cast<juce::TextButton*>(child); button != nullptr
+                && button->getToggleState())
+                selectedVisible = button->isVisible() && button->getWidth() >= 110;
+        if (!selectedVisible) return fail("Overflow page selection is hidden or unreadably narrow");
+    }
+
     std::cout << "PASS: slider/combo extremes and JUCE radio-group page-selector navigation contract\n";
     return 0;
 }

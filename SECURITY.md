@@ -2,8 +2,7 @@
 
 ## Supported version
 
-Security fixes are applied to the current 1.x release line. Older development
-snapshots are not supported.
+Security fixes are applied to the current 1.x release line.
 
 ## Reporting a vulnerability
 

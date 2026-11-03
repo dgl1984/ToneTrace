@@ -8,6 +8,7 @@
 #include "controls/ToneTraceBandSlider.h"
 #include "controls/ToneTraceChoiceControl.h"
 #include "controls/ToneTraceCommandButton.h"
+#include "controls/ToneTraceCurveDescriptionField.h"
 #include "controls/ToneTraceParameterSlider.h"
 #include "controls/ToneTracePageSelector.h"
 #include "controls/ToneTraceReadOnlyField.h"
@@ -19,6 +20,7 @@ class ToneTraceProcessor;
 class ToneTraceEditor final : public juce::AudioProcessorEditor,
                               private juce::AudioProcessorParameter::Listener,
                               private juce::AsyncUpdater,
+                              private juce::ChangeListener,
                               private juce::KeyListener
 {
 public:
@@ -31,14 +33,18 @@ public:
 
    #if defined(TONETRACE_VISUAL_SNAPSHOT_BUILD)
     void setSnapshotPage(int pageId);
+    void setSnapshotInvalidEntry();
     int getSnapshotPageCount() const noexcept;
     std::unique_ptr<juce::Component> createOptionsSnapshotComponent();
    #endif
 
 private:
+    friend class ToneTraceCurveDescriptionField;
+
     void parameterValueChanged(int parameterIndex, float newValue) override;
     void parameterGestureChanged(int parameterIndex, bool gestureIsStarting) override;
     void handleAsyncUpdate() override;
+    void changeListenerCallback(juce::ChangeBroadcaster*) override { triggerAsyncUpdate(); }
 
     void updateVisualValueLabels();
     void updateStatusField();
@@ -70,12 +76,18 @@ private:
 
     ToneTraceProcessor& processor_;
 
+    std::unique_ptr<tonetrace::ProfileSnapshot> graphSnapshot_;
+    tonetrace::IrRenderSettings graphSettings_;
+    double graphMaximumDb_ = -1.0;
+    std::uint64_t graphRevision_ = 0;
+    juce::String completedDescription_;
+
     juce::Label heading_;
     juce::Label subtitle_;
     ToneTracePageSelector pageSelector_;
     ToneTraceGraphSurface graphSurface_;
-    ToneTraceReadOnlyField curveReadout_ { "Curve Readout", "Exact frequency and curve values.", true };
-    ToneTraceReadOnlyField curveDescription_ { "Curve Description", "Reference, Target, and applied correction description.", true };
+    ToneTraceCurveDescriptionField curveReadout_ { "Curve Readout", "Exact frequency and curve values.", true, false };
+    ToneTraceCurveDescriptionField curveDescription_ { "Curve Description", "Reference, Target, and applied correction description.", true, true };
     juce::Label curveDescriptionLabel_;
     juce::ToggleButton traceButton_ { "Trace Curve" };
     juce::TextButton copyDescriptionButton_ { "Copy Curve Description" };

@@ -1,7 +1,7 @@
 # Releasing Tone Trace EQ
 
-This is the Windows 1.x release procedure. Agree the changelog and release notes before publishing the release. The version comes from the
-single-line `VERSION` file.
+This is the Windows 1.x release procedure. Agree the changelog and release notes
+before publishing. The version comes from the single-line `VERSION` file.
 
 ## 1. Prepare the source
 
@@ -9,11 +9,25 @@ single-line `VERSION` file.
 2. Add a dated entry to `CHANGELOG.md` and update `RELEASE_NOTES.md`.
 3. Search the source for the old version and correct any user-facing text that
    intentionally names a release.
-4. Confirm `git status --short` contains only the intended release changes.
+4. Validate the release body locally:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify_release_notes.ps1
+   ```
+
+   The file must be UTF-8 **without a BOM**, contain no mojibake, name either
+   the semantic version or its public major.minor form in the first heading, and
+   end with a newline. Never paste release notes into the
+   GitHub web editor: the 1.1.0 body was saved with a BOM and OEM-decoded em
+   dashes that way.
+
+5. Confirm `git status --short` contains only the intended release changes.
 
 ## 2. Build the Windows asset
 
-The first configure fetches pinned JUCE 8.0.12 and clap-juce-extensions sources, so Git and network access are required unless local paths are provided as described in README.md.
+The first configure fetches pinned JUCE 8.0.12 and clap-juce-extensions sources,
+so Git and network access are required unless local paths are provided as
+described in README.md.
 
 From a normal Command Prompt or by double-clicking the file, run:
 
@@ -24,45 +38,81 @@ build_all_windows.bat
 The builder deletes only its generated `build-cmake/windows-x64-release` and
 `dist/ToneTrace_EQ_<version>_Windows_x64` paths. It then configures a clean
 Visual Studio 2022 x64 build, compiles the plug-in and verification targets,
-runs all registered CTest tests, stages the Release component, writes the
-manifest, creates the ZIP, lists the archive to verify readability, and stops.
-It never installs a plug-in.
+runs all registered CTest suites, runs the source-contract checks, stages the
+Release component, writes the manifest, verifies the staged package and its
+manifest, creates the ZIP, lists the archive to verify readability, and writes
+the ZIP SHA-256. It never installs a plug-in.
 
-The required output is:
+The required outputs are:
 
-`dist/ToneTrace_EQ_<version>_Windows_x64.zip`
+- `dist/ToneTrace_EQ_<version>_Windows_x64.zip`
+- `dist/ToneTrace_EQ_<version>_Windows_x64.zip.sha256`
 
 ## 3. Verify the result
 
 The build is releasable only when all of these are true:
 
-- the build log reports all registered tests passed;
-- the build log contains no compiler warning or error;
+- the build log reports all registered tests passed and the source-contract
+  check passed;
+- the build log contains no compiler warning or error (the builder reports any
+  warning lines it finds but does not treat third-party warnings as fatal);
+- the staged-package check passed: exactly one `.clap` and one complete `.vst3`
+  bundle, the VST3 `moduleinfo.json` reports the release version, no developer
+  executables, `.dll`, `.lib`, `.pdb`, or object files, and every staged file
+  appears in `docs/BUILD_MANIFEST.txt` with a matching size and hash;
 - the ZIP opens and contains only the package root plus `plugins/`, `docs/`,
   `licenses/`, and `LICENSE`;
-- exactly one `.clap` file and one complete `.vst3` bundle exist, with no developer executables, `.dll`, `.lib`, `.pdb`, or object files;
-- `docs/BUILD_MANIFEST.txt` records every packaged file except itself;
-- pluginval (strictness 5 or higher) and clap-validator load the exact packaged VST3 and CLAP binaries; investigate failures and record skips or warnings;
+- pluginval (strictness 5 or higher) and clap-validator load the exact packaged
+  VST3 and CLAP binaries; investigate failures and record skips or warnings;
 - the manual real-host checklist in `plugins/README.md` has been completed with
   the packaged binary.
 
-For a local comparison value, calculate (but do not upload as a second asset):
+Record the printed ZIP SHA-256. To recompute it:
 
 ```powershell
 Get-FileHash -Algorithm SHA256 .\dist\ToneTrace_EQ_<version>_Windows_x64.zip
 ```
 
+The `.sha256` file is a local record. Upload only the ZIP; do not add the hash
+file as a second release asset.
+
 ## 4. Publish on GitHub
 
 1. Commit the verified source.
-2. Create an annotated tag: `git tag -a v<version> -m "Tone Trace EQ <version>"`.
+2. Create an annotated tag:
+   `git tag -a v<version> -m "Tone Trace EQ <version>"`.
 3. Push the branch and tag.
-4. Create a GitHub release for `v<version>` titled
-   `Tone Trace EQ <version>`.
-5. Use `RELEASE_NOTES.md` as the release description.
-6. Upload only `ToneTrace_EQ_<version>_Windows_x64.zip`.
-7. Download the published ZIP once and compare its SHA-256 value with the local
+4. Create the GitHub release from the validated file, not from pasted text:
+
+   ```powershell
+   gh release create v<version> `
+     --title "Tone Trace EQ <version>" `
+     --notes-file RELEASE_NOTES.md `
+     dist/ToneTrace_EQ_<version>_Windows_x64.zip
+   ```
+
+5. Download the published ZIP once and compare its SHA-256 value with the local
    value from step 3.
 
-GitHub's automatic source archives may appear beside the uploaded file; they
-are generated by GitHub and are not additional project-built assets.
+## 5. Verify the published release
+
+Run these checks after publishing. They must pass before announcing the release.
+
+```powershell
+# The published body must match the repository file byte-for-byte in text.
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify_release_notes.ps1 -Tag v<version>
+
+# The only uploaded asset must be the ZIP and its hash must match.
+gh release view v<version> --json tagName,body,assets
+gh release download v<version> --pattern "ToneTrace_EQ_<version>_Windows_x64.zip" --dir dist\published
+Get-FileHash -Algorithm SHA256 .\dist\published\ToneTrace_EQ_<version>_Windows_x64.zip
+```
+
+If the body is wrong, repair it from the same file and re-verify:
+
+```powershell
+gh release edit v<version> --notes-file RELEASE_NOTES.md
+```
+
+GitHub's automatic source archives may appear beside the uploaded file; they are
+generated by GitHub and are not additional project-built assets.

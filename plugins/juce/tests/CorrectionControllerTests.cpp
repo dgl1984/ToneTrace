@@ -101,6 +101,8 @@ int main()
                                            diagnosticsFor(target), settings);
     require(result.accepted, "released engine analysis was rejected through controller");
     require(controller.hasProfile(), "successful analysis did not install a profile");
+    require(!controller.inProgressTargetCopy().has_value(),
+            "completed analysis left its Target reporting window open");
 
     const auto saved = controller.saveProjectState();
     require(saved.find("phase frozen") != std::string::npos,
@@ -120,6 +122,8 @@ int main()
     require(!controller.hasProfile(), "controller reset left a learned profile active");
     require(controller.saveProjectState() == serializeProjectState(nullptr),
             "controller reset did not publish Ready state");
+    require(!controller.inProgressTargetCopy().has_value(),
+            "controller reset left a stale Target reporting spectrum");
 
     // Reinstall a learned profile so rebuild/restore tests below still exercise
     // the same post-analysis path after Reset.
@@ -143,10 +147,14 @@ int main()
     require(controller.analyze(noRawAudio, noRawAudio, {}, {}, settings,
                                &importedReference, &importedTarget).accepted,
             "imported Reference/Target analysis did not use the shared controller path");
+    require(!controller.inProgressTargetCopy().has_value(),
+            "completed imported analysis left its Target reporting window open");
 
     settings.correctionSharpness = 1.25;
     require(controller.rebuild(settings).accepted,
             "post-match sharpness rebuild failed");
+    require(!controller.inProgressTargetCopy().has_value(),
+            "profile rebuild left a stale in-progress Target report");
     settings.mode = MatchMode::Voice;
     require(controller.rebuild(settings).accepted,
             "retained-spectrum Match Mode reinterpretation failed");
@@ -206,8 +214,16 @@ int main()
 
     while (!analysisStarted.load(std::memory_order_acquire)) std::this_thread::yield();
     std::size_t saveCount = 0;
+    bool sawTargetReport = false;
     do
     {
+        if (const auto report = concurrent.inProgressTargetCopy(); report.has_value())
+        {
+            require(!report->points.empty(),
+                    "in-progress Target reporting spectrum contained no points");
+            sawTargetReport = true;
+        }
+
         const auto state = concurrent.saveProjectState();
         try
         {
@@ -229,10 +245,95 @@ int main()
     analysis.join();
     require(concurrentResult.accepted, "concurrent analysis failed");
     require(saveCount > 0, "concurrent state-save test did not execute");
+    require(sawTargetReport,
+            "long Correct never exposed its Target spectrum during analysis");
+    require(!concurrent.inProgressTargetCopy().has_value(),
+            "completed Correct left the transient Target reporting window open");
     const auto finalConcurrentState = deserializeProjectState(concurrent.saveProjectState());
     require(finalConcurrentState.phase == WorkflowPhase::Frozen
                 && finalConcurrentState.snapshot != nullptr,
             "completed concurrent analysis was not published to the state cache");
+
+    // An analysis that is superseded while it runs must not commit a stale
+    // profile to the realtime core. The processor drops a stale completion, so
+    // committing here would leave the engine and the published UI state
+    // disagreeing about whether a profile exists.
+    CorrectionController superseded;
+    require(superseded.prepare(rate, 2).accepted, "superseded controller prepare failed");
+    int cancellationChecks = 0;
+    const auto supersededResult = superseded.analyze(
+        reference, target, diagnosticsFor(reference), diagnosticsFor(target), settings,
+        nullptr, nullptr,
+        [&cancellationChecks]
+        {
+            ++cancellationChecks;
+            return true;
+        });
+    require(!supersededResult.accepted, "superseded analysis reported success");
+    require(cancellationChecks > 0, "superseded analysis never checked cancellation");
+    require(!superseded.hasProfile(),
+            "superseded analysis committed a profile to the realtime core");
+    require(!superseded.inProgressTargetCopy().has_value(),
+            "superseded analysis left its Target reporting window open");
+
+    // Rebuild and manual-only commits run on the same worker and must obey the
+    // same cancellation epoch. Otherwise Reset/restore/import can be followed
+    // by a stale profile install from the previous transaction.
+    CorrectionController cancellableRebuild;
+    require(cancellableRebuild.prepare(rate, 2).accepted, "cancellable rebuild prepare failed");
+    require(cancellableRebuild.analyze(reference, target, diagnosticsFor(reference),
+                                       diagnosticsFor(target), settings).accepted,
+            "cancellable rebuild analysis failed");
+    const auto beforeCancelledRebuild = cancellableRebuild.saveProjectState();
+    auto rebuiltSettings = settings;
+    rebuiltSettings.correctionSharpness = 1.35;
+    int rebuildCancellationChecks = 0;
+    const auto cancelledRebuild = cancellableRebuild.rebuild(
+        rebuiltSettings,
+        [&rebuildCancellationChecks]
+        {
+            ++rebuildCancellationChecks;
+            return true;
+        });
+    require(!cancelledRebuild.accepted, "superseded rebuild reported success");
+    require(rebuildCancellationChecks > 0, "superseded rebuild never checked cancellation");
+    require(cancellableRebuild.saveProjectState() == beforeCancelledRebuild,
+            "superseded rebuild committed a stale profile");
+
+    CorrectionController cancellableManual;
+    require(cancellableManual.prepare(rate, 2).accepted, "cancellable manual prepare failed");
+    const auto beforeCancelledManual = cancellableManual.saveProjectState();
+    CorrectionSettings cancelledManualSettings;
+    cancelledManualSettings.resolution = 3;
+    cancelledManualSettings.manualGains = { 0.0, 6.0, 0.0 };
+    int manualCancellationChecks = 0;
+    const auto cancelledManual = cancellableManual.commitManualCorrection(
+        cancelledManualSettings,
+        [&manualCancellationChecks]
+        {
+            ++manualCancellationChecks;
+            return true;
+        });
+    require(!cancelledManual.accepted, "superseded manual commit reported success");
+    require(manualCancellationChecks > 0, "superseded manual commit never checked cancellation");
+    require(cancellableManual.saveProjectState() == beforeCancelledManual,
+            "superseded manual commit installed a stale kernel");
+
+    CorrectionController tailController;
+    require(tailController.prepare(rate, 2).accepted, "tail fixture prepare failed");
+    CorrectionSettings tailSettings;
+    tailSettings.manualGains = { 0.0, 6.0, 0.0 };
+    const auto tailResult = tailController.commitManualCorrection(tailSettings);
+    tonetrace::IrRenderSettings expectedRender;
+    expectedRender.sampleRate = rate;
+    expectedRender.manualGains = tailSettings.manualGains;
+    const auto expectedTail = static_cast<double>(tonetrace::renderManualCorrectionIr(expectedRender).size()) / rate;
+    require(tailResult.accepted && std::abs(tailResult.committedTailSeconds - expectedTail) < 1.0e-12,
+            "committed tail differs from released kernel length");
+    tailSettings.manualGains.clear();
+    const auto clearedTail = tailController.commitManualCorrection(tailSettings);
+    require(clearedTail.accepted && clearedTail.committedTailSeconds == 0.0,
+            "neutral manual correction retained a filter tail");
 
     std::cout << "Tone Trace Slice 03 correction-controller tests passed\n";
     return 0;

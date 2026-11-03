@@ -256,12 +256,12 @@ int main(int argc, char** argv)
     juce::String manifest;
     juce::String focusManifest;
     juce::String diagnostics;
-    focusManifest << "Tone Trace 1.1 focus/layout manifest\n";
+    focusManifest << "Tone Trace 1.2 focus/layout manifest\n";
     focusManifest << "Visible keyboard-focusable direct children must be named, ordered, in bounds, and non-overlapping.\n\n";
-    manifest << "Tone Trace 1.1 visual snapshots\n";
+    manifest << "Tone Trace 1.2 visual snapshots\n";
     manifest << "These are JUCE createComponentSnapshot() renders of the real ToneTraceEditor on this machine.\n";
     manifest << "They use SoftwareImageType for deterministic readback and test logical layout rather than platform DPI scaling.\n\n";
-    diagnostics << "Tone Trace 1.1 snapshot diagnostics\n";
+    diagnostics << "Tone Trace 1.2 snapshot diagnostics\n";
     diagnostics << "peer=none-offscreen-supported is expected for Component::createComponentSnapshot().\n";
     diagnostics << "Failure kinds: COMPONENT_FAILURE, PEER_FAILURE, LAYOUT_FAILURE, SNAPSHOT_FAILURE, UNIFORM_IMAGE_FAILURE, PNG_WRITE_FAILURE.\n\n";
 
@@ -286,9 +286,58 @@ int main(int argc, char** argv)
         }
     }
 
+    // Populated curves and bypass must be reviewed as well as the empty layout.
+    tonetrace::CorrectionModel model;
+    model.mode = tonetrace::MatchMode::FullMix;
+    model.analysisLowHz = 10.0;
+    model.analysisHighHz = 30000.0;
+    model.resolution = 30;
+    model.nodes = {{10, 0, 1}, {80, 6, 1}, {500, -4, 1}, {3000, 5, 1}, {12000, -3, 1}, {30000, 0, 1}};
+    const auto imported = processor.importModel(model);
+    ok = ok && imported.ok;
+    processor.setContinuousFromUi(tonetrace::product::kCorrectionGainIndex, 6.0);
+    for (bool bypass : {false, true})
+    {
+        processor.setToggleFromUi(tonetrace::product::kBypassIndex, bypass);
+        // Recreate the real editor so snapshots need no test-only UI mutation hook.
+        ToneTraceEditor populated(processor);
+        for (const auto& size : sizes)
+        {
+            populated.setSize(size.width, size.height);
+            for (int page = 1; page <= 3; ++page)
+            {
+                populated.setSnapshotPage(page);
+                const auto name = juce::String(size.name) + (bypass ? "_bypassed_" : "_learned_") + pageName(page) + ".png";
+                const auto result = renderAndWritePng(populated, output.getChildFile(name), diagnostics);
+                ok = ok && result.ok;
+                manifest << (result.ok ? "PASS " : "FAIL ") << name << "\n";
+                inspectFocusableChildren(populated, name, focusManifest, ok);
+            }
+        }
+    }
+
+    processor.setContinuousFromUi(tonetrace::product::kCorrectionResolutionIndex, 120.0);
+    ToneTraceEditor dense(processor);
+    dense.setSize(tonetrace::ui::minimumWidth, tonetrace::ui::minimumHeight);
+    for (int page : { 1, 3, dense.getSnapshotPageCount() })
+    {
+        dense.setSnapshotPage(page);
+        const auto name = "minimum_120-bands_" + pageName(page) + ".png";
+        const auto result = renderAndWritePng(dense, output.getChildFile(name), diagnostics);
+        ok = ok && result.ok;
+        manifest << (result.ok ? "PASS " : "FAIL ") << name << "\n";
+        inspectFocusableChildren(dense, name, focusManifest, ok);
+    }
+    dense.setSnapshotPage(2);
+    dense.setSnapshotInvalidEntry();
+    const auto errorResult = renderAndWritePng(dense, output.getChildFile("minimum_invalid-entry.png"), diagnostics);
+    ok = ok && errorResult.ok;
+    manifest << (errorResult.ok ? "PASS " : "FAIL ") << "minimum_invalid-entry.png\n";
+    inspectFocusableChildren(dense, "minimum_invalid-entry.png", focusManifest, ok);
+
     if (auto options = editor.createOptionsSnapshotComponent())
     {
-        const auto file = output.getChildFile("options-dialog_470x330.png");
+        const auto file = output.getChildFile("options-dialog_470x350.png");
         const auto result = renderAndWritePng(*options, file, diagnostics);
         ok = ok && result.ok;
         manifest << (result.ok ? "PASS " : "FAIL ") << file.getFileName();
@@ -300,8 +349,8 @@ int main(int argc, char** argv)
     else
     {
         ok = false;
-        manifest << "FAIL options-dialog_470x330.png | COMPONENT_FAILURE | Options snapshot component was not created\n";
-        diagnostics << "FAIL options-dialog_470x330.png | COMPONENT_FAILURE | Options snapshot component was not created\n";
+        manifest << "FAIL options-dialog_470x350.png | COMPONENT_FAILURE | Options snapshot component was not created\n";
+        diagnostics << "FAIL options-dialog_470x350.png | COMPONENT_FAILURE | Options snapshot component was not created\n";
     }
 
     output.getChildFile("SNAPSHOT_MANIFEST.txt").replaceWithText(manifest);

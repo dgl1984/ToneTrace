@@ -188,6 +188,13 @@ void CaptureBuffer::append(const float* const* input,
                            MatchMode mode) noexcept
 {
     if (input == nullptr || inputChannels == 0 || sampleRate <= 0) return;
+    // Once the preallocated capture window is full there is no more audio to
+    // retain and no further monitor/confidence work to publish. Re-running the
+    // per-sample filter bank after this point burns audio-thread CPU and can
+    // make the confidence level chatter, retriggering short notification
+    // sweeps while the host keeps streaming. Capture full is a terminal state
+    // until reset()/prepare() provides a fresh window.
+    if (overflowed) return;
     inputChannels = std::min<std::size_t>(2, inputChannels);
     if (channelCount == 0) channelCount = inputChannels;
     if (channelCount != inputChannels)

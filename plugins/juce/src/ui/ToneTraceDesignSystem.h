@@ -21,7 +21,7 @@ inline const juce::Colour warning = juce::Colour::fromRGB(255, 205, 122);
 
 namespace spacing
 {
-inline constexpr int outer = 20;
+inline constexpr int outer = 14;
 inline constexpr int panelInset = 14;
 inline constexpr int sectionGap = 14;
 inline constexpr int rowGap = 7;
@@ -42,9 +42,9 @@ inline juce::Font small() { return juce::Font(juce::FontOptions(12.5f)); }
 }
 
 inline constexpr int defaultWidth = 960;
-inline constexpr int defaultHeight = 920;
+inline constexpr int defaultHeight = 780;
 inline constexpr int minimumWidth = 720;
-inline constexpr int minimumHeight = 780;
+inline constexpr int minimumHeight = 640;
 inline constexpr int maximumWidth = 1500;
 inline constexpr int maximumHeight = 1000;
 }

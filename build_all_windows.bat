@@ -6,7 +6,7 @@ if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "SOURCE_DIR=%SCRIPT_DIR%"
 set "FAILED_STEP="
 set "BUILD_ERROR=1"
-set "BUILD_SCRIPT_VERSION=2026-08-22a"
+set "BUILD_SCRIPT_VERSION=2026-10-26b"
 
 if not "%SCRIPT_DIR:!=%"=="%SCRIPT_DIR%" (
   echo Tone Trace complete Windows build
@@ -164,6 +164,19 @@ if not defined CMAKE_EXE (
   goto :build_failed
 )
 
+set "POWERSHELL_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "!POWERSHELL_EXE!" (
+  set "POWERSHELL_EXE="
+  for /f "delims=" %%I in ('where powershell.exe 2^>nul') do if not defined POWERSHELL_EXE set "POWERSHELL_EXE=%%I"
+)
+if not defined POWERSHELL_EXE (
+  set "FAILED_STEP=Locating Windows PowerShell"
+  set "BUILD_ERROR=9"
+  echo ERROR: Windows PowerShell was not found.
+  echo It is required for source-contract checks and the ZIP SHA-256 value.
+  goto :build_failed
+)
+
 for %%I in ("!CMAKE_EXE!") do set "CTEST_EXE=%%~dpIctest.exe"
 if not exist "!CTEST_EXE!" (
   set "FAILED_STEP=Locating CTest"
@@ -222,13 +235,34 @@ if not "!STEP_ERROR!"=="0" (
 )
 
 echo.
-echo Running all registered engine, realtime, layout, state, and CLAP tests...
+echo Running all registered engine, realtime, layout, state, and plug-in tests...
 "!CTEST_EXE!" --test-dir "%BUILD_DIR%" -C Release --output-on-failure >> "!BUILD_LOG!" 2>&1
 set "STEP_ERROR=!errorlevel!"
 if not "!STEP_ERROR!"=="0" (
   set "FAILED_STEP=Automated tests"
   set "BUILD_ERROR=!STEP_ERROR!"
   goto :build_failed
+)
+
+echo.
+echo Checking source contracts and release invariants...
+"!POWERSHELL_EXE!" -NoProfile -ExecutionPolicy Bypass -File "%SOURCE_DIR%\plugins\juce\tests\SourceContractTests.ps1" >> "!BUILD_LOG!" 2>&1
+set "STEP_ERROR=!errorlevel!"
+if not "!STEP_ERROR!"=="0" (
+  set "FAILED_STEP=Source-contract verification"
+  set "BUILD_ERROR=!STEP_ERROR!"
+  goto :build_failed
+)
+
+rem Record compiler warnings for the human release check. Third-party warnings
+rem are not treated as build failures here; RELEASING.md requires a clean log.
+set "WARNING_COUNT=0"
+for /f "delims=" %%W in ('findstr /i /c:": warning " "!BUILD_LOG!" 2^>nul') do set /a WARNING_COUNT+=1
+if not "!WARNING_COUNT!"=="0" (
+  echo WARNING: the build log contains !WARNING_COUNT! compiler warning line^(s^).
+  echo Review "!BUILD_LOG!" before publishing.
+  >> "!BUILD_LOG!" echo.
+  >> "!BUILD_LOG!" echo Compiler warning lines: !WARNING_COUNT!
 )
 
 echo.
@@ -245,6 +279,16 @@ if not "!STEP_ERROR!"=="0" (
 set "STEP_ERROR=!errorlevel!"
 if not "!STEP_ERROR!"=="0" (
   set "FAILED_STEP=Writing the build and source manifest"
+  set "BUILD_ERROR=!STEP_ERROR!"
+  goto :build_failed
+)
+
+echo.
+echo Verifying the staged package contents...
+"!CMAKE_EXE!" -DSTAGE_DIR="%STAGE_DIR%" -DPROJECT_VERSION="!PROJECT_VERSION!" -P "%SOURCE_DIR%\cmake\verify_package.cmake" >> "!BUILD_LOG!" 2>&1
+set "STEP_ERROR=!errorlevel!"
+if not "!STEP_ERROR!"=="0" (
+  set "FAILED_STEP=Verifying the staged package"
   set "BUILD_ERROR=!STEP_ERROR!"
   goto :build_failed
 )
@@ -276,9 +320,37 @@ if not "!STEP_ERROR!"=="0" (
 )
 
 echo.
+echo Calculating the ZIP SHA-256...
+set "ZIP_HASH_TMP=%TEMP%\tonetrace_zip_hash.txt"
+set "ZIP_HASH="
+rem Read the hash through a temporary file instead of a FOR /F command. The
+rem quoted PowerShell path inside a backquoted FOR command is misparsed by cmd
+rem (the opening quote is consumed), which previously left the hash undefined.
+"!POWERSHELL_EXE!" -NoProfile -Command "(Get-FileHash -LiteralPath '%ZIP_PATH%' -Algorithm SHA256).Hash.ToLowerInvariant()" > "!ZIP_HASH_TMP!" 2>nul
+if exist "!ZIP_HASH_TMP!" (
+  set /p ZIP_HASH=<"!ZIP_HASH_TMP!"
+  del "!ZIP_HASH_TMP!" >nul 2>nul
+)
+if not defined ZIP_HASH (
+  set "FAILED_STEP=Calculating the ZIP SHA-256"
+  set "BUILD_ERROR=10"
+  echo ERROR: The ZIP SHA-256 value could not be calculated.
+  goto :build_failed
+)
+> "%ZIP_HASH_PATH%" echo !ZIP_HASH!  %PACKAGE_NAME%.zip
+if not exist "%ZIP_HASH_PATH%" (
+  set "FAILED_STEP=Writing the ZIP SHA-256 file"
+  set "BUILD_ERROR=11"
+  echo ERROR: The ZIP SHA-256 file could not be written.
+  goto :build_failed
+)
+
+echo.
 echo SUCCESS: Tone Trace built, tested, staged, and packaged.
 echo Folder: "%STAGE_DIR%"
 echo ZIP:    "%ZIP_PATH%"
+echo SHA-256: !ZIP_HASH!
+echo Hash:   "%ZIP_HASH_PATH%"
 echo The ZIP is the only release asset. Per-file hashes are in docs\BUILD_MANIFEST.txt.
 echo Log:    "%BUILD_LOG%"
 echo Nothing was installed on this computer.
