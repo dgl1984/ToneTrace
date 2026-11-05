@@ -21,10 +21,12 @@ if (MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
-if (DEFINED JUCE_DIR)
+if (DEFINED JUCE_DIR AND NOT JUCE_DIR STREQUAL "")
   add_subdirectory("${JUCE_DIR}" JUCE)
 elseif (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/JUCE/CMakeLists.txt")
   add_subdirectory(deps/JUCE)
+elseif (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../deps/JUCE/CMakeLists.txt")
+  add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../deps/JUCE" JUCE)
 else()
   FetchContent_Declare(juce
     GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
@@ -192,13 +194,19 @@ target_link_libraries(ToneTraceProcessorStateTests PRIVATE
 
 juce_generate_juce_header(ToneTraceProcessorStateTests)
 
+# On macOS, generate Audio Unit in addition to VST3 and CLAP.
+set(TONETRACE_APPLE_FORMATS)
+if(APPLE)
+  set(TONETRACE_APPLE_FORMATS AU)
+endif()
+
 # Both formats use the same processor, editor, and state implementation.
 juce_add_plugin(ToneTraceEQ
   COMPANY_NAME "Lanes Audio"
   BUNDLE_ID "com.lanesaudio.tonetrace-eq"
   PLUGIN_MANUFACTURER_CODE Lane
   PLUGIN_CODE TTRE
-  FORMATS VST3
+  FORMATS VST3 ${TONETRACE_APPLE_FORMATS}
   PRODUCT_NAME "Tone Trace EQ"
   DESCRIPTION "Accessible match EQ"
   VST3_CATEGORIES Fx
@@ -254,9 +262,11 @@ target_link_libraries(ToneTraceEQ PRIVATE
 
 juce_generate_juce_header(ToneTraceEQ)
 
-if(NOT DEFINED CLAP_JUCE_EXTENSIONS_DIR)
+if(NOT DEFINED CLAP_JUCE_EXTENSIONS_DIR OR CLAP_JUCE_EXTENSIONS_DIR STREQUAL "")
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/clap-juce-extensions/CMakeLists.txt")
     set(CLAP_JUCE_EXTENSIONS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/clap-juce-extensions")
+  elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../deps/clap-juce-extensions/CMakeLists.txt")
+    set(CLAP_JUCE_EXTENSIONS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../deps/clap-juce-extensions")
   else()
     FetchContent_Declare(clap_juce
       GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git
@@ -266,6 +276,7 @@ if(NOT DEFINED CLAP_JUCE_EXTENSIONS_DIR)
   endif()
 endif()
 if(NOT TARGET clap_juce_sources)
+  set(CLAP_JUCE_EXTENSIONS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   add_subdirectory("${CLAP_JUCE_EXTENSIONS_DIR}" clap-juce-extensions EXCLUDE_FROM_ALL)
 endif()
 include(cmake/ToneTraceClapCompatibility.cmake)
@@ -275,11 +286,30 @@ clap_juce_extensions_plugin(TARGET ToneTraceEQ
   CLAP_USE_JUCE_PARAMETER_RANGES ALL
 )
 
+if(TONETRACE_BUILD_TESTS AND (WIN32 OR APPLE))
+  add_executable(tonetrace_clap_tests "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/test_clap_binary.cpp")
+  target_include_directories(tonetrace_clap_tests PRIVATE "${CLAP_JUCE_EXTENSIONS_DIR}/clap-libs/clap/include")
+  target_compile_definitions(tonetrace_clap_tests PRIVATE
+    TONETRACE_EXPECTED_VERSION=\"${TONETRACE_VERSION}\")
+  target_link_libraries(tonetrace_clap_tests PRIVATE ${CMAKE_DL_LIBS})
+  add_dependencies(tonetrace_clap_tests ToneTraceEQ_CLAP)
+  if(APPLE)
+    set(TONETRACE_CLAP_TEST_PATH "$<TARGET_BUNDLE_DIR:ToneTraceEQ_CLAP>")
+  else()
+    set(TONETRACE_CLAP_TEST_PATH "$<TARGET_FILE:ToneTraceEQ_CLAP>")
+  endif()
+  add_test(NAME tonetrace_clap_tests COMMAND tonetrace_clap_tests "${TONETRACE_CLAP_TEST_PATH}")
+endif()
+
 install(TARGETS ToneTraceEQ_CLAP
   LIBRARY DESTINATION plugins/clap COMPONENT Release
   RUNTIME DESTINATION plugins/clap COMPONENT Release)
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/ToneTraceEQ_artefacts/$<CONFIG>/VST3/Tone Trace EQ.vst3"
   DESTINATION plugins/vst3 COMPONENT Release)
+if(APPLE)
+  install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/ToneTraceEQ_artefacts/$<CONFIG>/AU/Tone Trace EQ.component"
+    DESTINATION plugins/au COMPONENT Release)
+endif()
 install(FILES "${CLAP_JUCE_EXTENSIONS_DIR}/LICENSE.md"
   DESTINATION licenses/clap-juce-extensions COMPONENT Release)
 get_target_property(juceCoreDir juce::juce_core INTERFACE_JUCE_MODULE_PATH)

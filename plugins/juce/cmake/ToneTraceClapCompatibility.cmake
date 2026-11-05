@@ -36,5 +36,10 @@ tonetrace_patch_clap("auto pbi = paramPtrByClapID[paramId];\n        value = (do
   "for (const auto& control : tonetrace::product::kImplementedContinuousControls)\n            if (control.parameter->releasedNumericId == paramId)\n            {\n                if (size == 0 || !std::isfinite(value)) return false;\n                const auto text = tonetrace::product::formatContinuous(control, value, true);\n                snprintf(display, size, \"%s\", text.c_str());\n                return true;\n            }\n        auto pbi = paramPtrByClapID[paramId];\n        value = (double)getNormalisedParameterValue(pbi, (float)value);")
 tonetrace_patch_clap("auto pbi = paramPtrByClapID[paramId];\n        *value = (double)getUnNormalisedParameterValue("
   "for (const auto& control : tonetrace::product::kImplementedContinuousControls)\n            if (control.parameter->releasedNumericId == paramId)\n                return tonetrace::product::parseContinuous(control, display, *value);\n        auto pbi = paramPtrByClapID[paramId];\n        *value = (double)getUnNormalisedParameterValue(")
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ToneTraceClapWrapper.cpp" "${wrapper}")
-set_property(TARGET clap_juce_sources PROPERTY INTERFACE_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/ToneTraceClapWrapper.cpp")
+if(APPLE)
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ToneTraceClapWrapper.mm" "${wrapper}")
+  set_property(TARGET clap_juce_sources PROPERTY INTERFACE_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/ToneTraceClapWrapper.mm")
+else()
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ToneTraceClapWrapper.cpp" "${wrapper}")
+  set_property(TARGET clap_juce_sources PROPERTY INTERFACE_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/ToneTraceClapWrapper.cpp")
+endif()

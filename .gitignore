@@ -12,6 +12,7 @@ release-*/
 # Platform builder artifacts
 ToneTrace_Windows_last_build.log
 ToneTrace_macOS_last_build.log
+BUILD_MACOS_LOG.txt
 *.sha256
 
 # Local verification output
@@ -50,3 +51,4 @@ Thumbs.db
 # Temporary files
 *.tmp
 $out
+__pycache__/
