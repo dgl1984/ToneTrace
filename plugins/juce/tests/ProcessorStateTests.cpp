@@ -788,7 +788,15 @@ void testAuditRegressions()
 
     require(processor.continuousParameter(kCorrectionGainIndex).isAutomatable(), "Output gain automation disabled");
     require(processor.toggleParameter(kBypassIndex).isAutomatable(), "Bypass automation disabled");
-    require(!processor.continuousParameter(kCorrectionStrengthIndex).isAutomatable(), "Async strength advertised as realtime automation");
+    for (const auto index : { kMaximumCorrectionIndex, kCorrectionStrengthIndex,
+                              kCorrectionRangeLowIndex, kCorrectionRangeHighIndex,
+                              kCorrectionSharpnessIndex })
+        require(processor.continuousParameter(index).isAutomatable(),
+                "Safe correction control hidden from host automation/OSARA");
+    require(processor.toggleParameter(kFullCorrectionRangeIndex).isAutomatable(),
+            "Full Correction Range hidden from host automation/OSARA");
+    require(!processor.continuousParameter(kCorrectionResolutionIndex).isAutomatable(),
+            "Structural band resampling advertised as automation");
     require(!processor.matchModeParameter().isAutomatable(), "Async mode advertised as realtime automation");
     require(!processor.workflowParameter().isAutomatable(), "Workflow commands advertised as realtime automation");
 

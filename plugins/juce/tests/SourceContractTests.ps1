@@ -495,7 +495,7 @@ Require-Text $snapshotMain 'PEER_FAILURE' 'Snapshot diagnostics must distinguish
 Require-Text $snapshotMain 'LAYOUT_FAILURE' 'Snapshot diagnostics must distinguish layout failure.'
 Require-Text $snapshotMain 'peer=none-offscreen-supported' 'Snapshot diagnostics must record that a peer is optional for the supported offscreen path.'
 Require-Text $snapshotMain 'SNAPSHOT_DIAGNOSTICS.txt' 'Snapshot tool must emit detailed render diagnostics.'
-Require-Text $snapshotMain 'Tone Trace 1.2 visual snapshots' 'Snapshot manifests must identify the Tone Trace 1.2 validation output.'
+Require-Text $snapshotMain 'Tone Trace 1.3 visual snapshots' 'Snapshot manifests must identify the Tone Trace 1.3 validation output.'
 Require-Text $snapshotMain 'minimumWidth' 'Snapshot tool must cover minimum editor size.'
 Require-Text $snapshotMain 'defaultWidth' 'Snapshot tool must cover default editor size.'
 Require-Text $snapshotMain 'maximumWidth' 'Snapshot tool must cover maximum editor size.'
@@ -521,5 +521,5 @@ Require-Text $announcements 'UiaRaiseNotificationEvent' 'Windows announcements m
 Require-Text $announcements '#elif JUCE_MAC || JUCE_IOS' 'Apple announcements must remain platform guarded.'
 Require-Text $processor '~RestoreRelease()' 'Restore busy ownership must be exception safe.'
 
-Write-Host 'PASS: Tone Trace 1.2 source contract satisfied - JUCE radio-group page selector, one page-selection state, band/page navigation tones, Frozen navigation policy, processor state round-trip, released DSP, bypass, transfers, visual snapshots, and realtime guards present.'
+Write-Host 'PASS: Tone Trace 1.3 source contract satisfied - JUCE radio-group page selector, one page-selection state, band/page navigation tones, Frozen navigation policy, processor state round-trip, released DSP, bypass, transfers, visual snapshots, and realtime guards present.'
 

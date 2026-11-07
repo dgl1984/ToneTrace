@@ -2,7 +2,7 @@
 
 Capture the sound you want to match, capture the sound you want to change, then listen to the correction and shape it to suit the job. You can keep working with the result after you freeze it.
 
-This guide covers **Tone Trace 1.2 for Windows**, in VST3 and CLAP formats. It starts with installation and a first match, then explains material selection, editing, and reuse. The keyboard instructions sit alongside the controls they operate.
+This guide covers **Tone Trace 1.3 for Windows**, in VST3 and CLAP formats. It starts with installation and a first match, then explains material selection, editing, and reuse. The keyboard instructions sit alongside the controls they operate.
 
 1. [Getting started](#getting-started)
 2. [Finding your way around](#finding-your-way-around)
@@ -33,7 +33,7 @@ Rescan plug-ins in your host if necessary. Both formats provide the same editor 
 
 ### Updating an existing project
 
-Keep a backup before replacing an older version. Tone Trace 1.2 can read 1.0.5 CLAP states, but projects saved with 1.2 cannot be reopened with 1.0.5. VST3 and CLAP are separate plug-in identities: installing VST3 does not replace a CLAP instance in a project.
+Keep a backup before replacing an older version. Tone Trace 1.3 can read 1.0.5 CLAP states, but projects saved with 1.2 or 1.3 cannot be reopened with 1.0.5. VST3 and CLAP are separate plug-in identities: installing VST3 does not replace a CLAP instance in a project.
 
 If an older project automates matching settings, read [Automation and processing cost](#automation-and-processing-cost) before rendering it. The controls still exist, but some are no longer advertised as automatable.
 
@@ -79,7 +79,7 @@ On **Capture and transfer**, choose **Match Mode** before you start recording. A
 
 ### 2. Capture the Reference
 
-Choose **Capture Reference**, then play the Reference recording. Read Status as audio is collected. Once it says **Reference capture ready**, you can continue.
+Choose **Learn Reference**, then play the Reference recording. Read Status as audio is collected. Once it says **Reference capture ready**, you can continue.
 
 You do not need to fill the buffer. Standard modes hold up to about 30 seconds of accepted audio; that is a capacity, not a required recording length. Silence and very quiet gaps may not count toward Capture Time.
 
@@ -105,7 +105,7 @@ Save your project to retain the correction and your edits. You can also [export 
 
 ### Redoing a capture
 
-To replace only the Target, return to **Learn Target**. Tone Trace keeps the valid Reference and starts a fresh Target capture. **Capture Reference** starts a new Reference/Target pair.
+To replace only the Target, return to **Learn Target**. Tone Trace keeps the valid Reference and starts a fresh Target capture. **Learn Reference** starts a new Reference/Target pair.
 
 While a replacement is being prepared, the previous valid correction remains available until the new one is successfully built. You normally do not need Reset just to redo a capture.
 
@@ -425,7 +425,9 @@ Host undo and autosave state requests do not intentionally interrupt a live capt
 
 You can automate **Correction Gain**, **Emergency Clip Guard**, **Confidence Tone Volume**, **Tone Notifications**, and **Bypass** in your host. Tone Trace smooths gain changes and reads automation once per audio block, so a change can land slightly after the point you drew.
 
-If you're opening an older project, check its automation lanes before rendering. In 1.2, set Match Mode, Maximum Correction, Full Correction Range, Strength, Resolution, frequency range, and Q / Sharpness to the values you want by hand. Run Workflow Step commands by hand as well. Hosts may skip automation for these controls or apply it late. After changing a match, let Tone Trace finish calculating the correction before you render or export it.
+**Maximum Correction**, **Strength**, **frequency range (Low and High)**, **Q / Sharpness**, and **Full Correction Range** can also be automated and adjusted through REAPER/OSARA. Tone Trace recalculates the correction when you change them, without restarting capture. You may hear a short delay before the new setting takes effect. If you make several changes quickly, Tone Trace may apply only the latest setting. These controls do not provide sample-accurate automation. For offline rendering, use static correction settings and wait for the correction to finish updating before rendering or exporting.
+
+**Match Mode**, **Resolution**, and **Workflow Step** remain non-automatable. Set them by hand: they change capture interpretation, resample manual band edits, or run capture/analysis/reset commands. Check existing automation lanes for these controls when opening older projects.
 
 Bypass lets you hear the dry input and switch straight back to the correction. Tone Trace keeps processing while bypassed. To free up CPU, deactivate the plug-in or freeze the track in your host.
 
@@ -527,7 +529,7 @@ That is intentional when a valid profile existed. Tone Trace does not resume lea
 | Value | Command |
 | --- | --- |
 | 0 | No action |
-| 1 | Capture Reference |
+| 1 | Learn Reference |
 | 2 | Save Reference and Learn Target |
 | 3 | Correct Target |
 | 4 | Freeze Correction |

@@ -102,10 +102,10 @@ ToneTraceProcessor::ToneTraceProcessor()
     {
         const auto* control = &kImplementedContinuousControls[index];
         const auto* parameterSpec = control->parameter;
-        // Kernel-design controls are asynchronous setup, not timeline automation.
-        // Keep their IDs and values in state and the host's generic parameter UI.
+        // Expose safe correction edits to host automation and REAPER/OSARA.
+        // Kernel changes still use the existing asynchronous rebuild path.
         auto attributes = juce::AudioParameterFloatAttributes()
-            .withAutomatable(supportsRealtimeAutomation(*parameterSpec))
+            .withAutomatable(supportsHostAutomation(*parameterSpec))
             .withLabel(parameterSpec->unit)
             .withStringFromValueFunction([control](float value, int)
             {
@@ -143,7 +143,7 @@ ToneTraceProcessor::ToneTraceProcessor()
         kImplementedMatchMode.parameter->name,
         matchModeChoices,
         kImplementedMatchMode.defaultIndex,
-        juce::AudioParameterChoiceAttributes {}.withAutomatable(supportsRealtimeAutomation(*kImplementedMatchMode.parameter)));
+        juce::AudioParameterChoiceAttributes {}.withAutomatable(supportsHostAutomation(*kImplementedMatchMode.parameter)));
     addParameter(matchMode_);
     stateParameters_.push_back({ juce::Identifier(kImplementedMatchMode.parameter->key), matchMode_ });
 
@@ -154,7 +154,7 @@ ToneTraceProcessor::ToneTraceProcessor()
             juce::ParameterID { spec->key, 1 },
             spec->name,
             spec->defaultValue >= 0.5,
-            juce::AudioParameterBoolAttributes {}.withAutomatable(supportsRealtimeAutomation(*spec)));
+            juce::AudioParameterBoolAttributes {}.withAutomatable(supportsHostAutomation(*spec)));
         addParameter(parameter);
         toggleParameters_[index] = parameter;
         stateParameters_.push_back({ juce::Identifier(spec->key), parameter });
@@ -162,7 +162,7 @@ ToneTraceProcessor::ToneTraceProcessor()
 
     const auto& workflowSpec = released(100);
     auto workflowAttributes = juce::AudioParameterFloatAttributes()
-        .withAutomatable(supportsRealtimeAutomation(workflowSpec))
+        .withAutomatable(supportsHostAutomation(workflowSpec))
         .withStringFromValueFunction([](float value, int)
         {
             const auto step = std::clamp(static_cast<int>(std::lround(value)), 0, 7);
@@ -827,7 +827,7 @@ void ToneTraceProcessor::setWorkflowFromUi(int step)
     if (decoded == previous)
     {
         // An explicit UI press is a command even when the visible step has not
-        // changed: "Capture Reference" restarts the Reference capture, and
+        // changed: "Learn Reference" restarts the Reference capture, and
         // "Learn Target" restarts the Target capture. Correct/Freeze have no
         // meaningful same-step restart, and host automation keeps using
         // consumeWorkflowParameterChange so a stationary parameter is not

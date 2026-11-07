@@ -2,6 +2,15 @@
 
 Changes to Tone Trace EQ, with the newest first.
 
+## [1.3]
+
+- Renamed Capture Reference to Learn Reference in the editor, spoken button label, and host workflow text to match Learn Target. Capture behavior is unchanged.
+
+- Restored host automation and REAPER/OSARA exposure for Maximum Correction, Strength, frequency range, Q / Sharpness, and Full Correction Range. Background correction updates remain asynchronous.
+- Match Mode, Resolution, and Workflow Step remain excluded from automation.
+- Preserved Victor Tsaran's macOS port and VoiceOver implementation as the base. This update has not been built or tested on a Mac by the maintainer; VoiceOver behavior has not been reverified.
+- Added shared parameter-exposure regression coverage and a macOS VoiceOver verification checklist.
+
 ## [1.2]
 
 Tone Trace 1.2 makes the editor easier to read and navigate, brings spectrum reports into the capture workflow, and reduces unnecessary work while the plug-in is open. The matching engine is unchanged.

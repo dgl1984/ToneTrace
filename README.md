@@ -16,7 +16,7 @@ When the match sounds right, choose **Freeze Correction**. You can still edit it
 
 ## Download and install
 
-Get the public packages from [GitHub Releases](https://github.com/dgl1984/ToneTrace/releases). This guide covers **Tone Trace 1.2** for **Windows 10/11 x64**. The package version is **1.2.0**. See the [release notes](RELEASE_NOTES.md) for package details and upgrade information.
+Get the public packages from [GitHub Releases](https://github.com/dgl1984/ToneTrace/releases). This guide covers **Tone Trace 1.3** for **Windows 10/11 x64**. The package version is **1.3.0**. See the [release notes](RELEASE_NOTES.md) for package details and upgrade information.
 
 Extract the Windows ZIP and copy the format your host uses:
 

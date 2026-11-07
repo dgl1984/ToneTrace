@@ -70,7 +70,7 @@ const char* workflowText(int step) noexcept
 {
     switch (step)
     {
-        case 1: return "Capture Reference";
+        case 1: return "Learn Reference";
         case 2: return "Save Reference and Learn Target";
         case 3: return "Correct Target";
         case 4: return "Freeze Correction";

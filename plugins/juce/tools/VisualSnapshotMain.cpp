@@ -256,12 +256,12 @@ int main(int argc, char** argv)
     juce::String manifest;
     juce::String focusManifest;
     juce::String diagnostics;
-    focusManifest << "Tone Trace 1.2 focus/layout manifest\n";
+    focusManifest << "Tone Trace 1.3 focus/layout manifest\n";
     focusManifest << "Visible keyboard-focusable direct children must be named, ordered, in bounds, and non-overlapping.\n\n";
-    manifest << "Tone Trace 1.2 visual snapshots\n";
+    manifest << "Tone Trace 1.3 visual snapshots\n";
     manifest << "These are JUCE createComponentSnapshot() renders of the real ToneTraceEditor on this machine.\n";
     manifest << "They use SoftwareImageType for deterministic readback and test logical layout rather than platform DPI scaling.\n\n";
-    diagnostics << "Tone Trace 1.2 snapshot diagnostics\n";
+    diagnostics << "Tone Trace 1.3 snapshot diagnostics\n";
     diagnostics << "peer=none-offscreen-supported is expected for Component::createComponentSnapshot().\n";
     diagnostics << "Failure kinds: COMPONENT_FAILURE, PEER_FAILURE, LAYOUT_FAILURE, SNAPSHOT_FAILURE, UNIFORM_IMAGE_FAILURE, PNG_WRITE_FAILURE.\n\n";
 

@@ -36,12 +36,19 @@ struct ReleasedParameterSpec
 };
 
 // The historical catalog below records the released contract. The JUCE port's
-// current automation capability is narrower: only callback-consumed parameters
-// can follow an audio timeline. IDs and state values are independent of this flag.
-[[nodiscard]] constexpr bool supportsRealtimeAutomation(const ReleasedParameterSpec& spec) noexcept
+// automation flags also determine REAPER/OSARA parameter access. Safe correction
+// edits remain exposed even when applied by a coalesced background rebuild; this
+// does not promise sample-accurate timing. Structural controls stay restricted.
+[[nodiscard]] constexpr bool supportsHostAutomation(const ReleasedParameterSpec& spec) noexcept
 {
     switch (spec.releasedNumericId)
     {
+        case 120: // correction strength
+        case 140: // correction range low
+        case 150: // correction range high
+        case 160: // maximum correction
+        case 170: // full correction range
+        case 190: // correction sharpness
         case 180: // output gain
         case 240: // notification enable
         case 250: // notification level
@@ -84,7 +91,7 @@ inline constexpr std::array<const char*, 5> kMatchModeChoices {{
 
 inline constexpr std::array<const char*, 8> kWorkflowChoices {{
     "No action",
-    "Capture Reference",
+    "Learn Reference",
     "Save Reference and Learn Target",
     "Correct Target",
     "Freeze Correction",

@@ -24,6 +24,15 @@ int main()
     require(kReleasedParameters.size() == 19, "released parameter count");
     require(releasedCatalogValid(), "released catalog structural validation");
 
+    // Shared by macOS AU/VST3/CLAP and Windows: host automation flags also
+    // control access through REAPER/OSARA. Keep safe correction edits exposed.
+    for (const int id : { 120, 140, 150, 160, 170, 180, 190, 240, 250, 260, 270 })
+        require(supportsHostAutomation(*findReleasedParameterById(id)),
+                "Safe control lost host automation/accessibility exposure");
+    for (const int id : { 100, 110, 130, 195, 200, 210, 220, 230 })
+        require(!supportsHostAutomation(*findReleasedParameterById(id)),
+                "Structural command or read-only telemetry exposed as automation");
+
     const auto* workflow = findReleasedParameterById(100);
     const auto* mode = findReleasedParameterById(110);
     const auto* gainParameter = findReleasedParameterById(180);

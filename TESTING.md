@@ -1,7 +1,7 @@
-# Building and testing Tone Trace 1.2 from source
+# Building and testing Tone Trace 1.3 from source
 
-`VERSION` is the machine-readable package version (`1.2.0`). The public release
-name is `1.2`. The source tree contains one plug-in implementation under
+`VERSION` is the machine-readable package version (`1.3.0`). The public release
+name is `1.3`. The source tree contains one plug-in implementation under
 `plugins/juce`; there is no legacy wrapper fallback.
 
 ## Source layout
@@ -64,6 +64,35 @@ cmake --build --preset macos-universal-release --parallel
 ctest --preset macos-universal-release --output-on-failure
 ```
 
+### Correction automation and VoiceOver regression checks
+
+The restored correction automation flags are shared by the Windows plug-ins and
+Victor Tsaran's macOS AU, VST3, and CLAP port. `BUILD_MACOS.sh` and the macOS CI
+job already run `ToneTraceProductCatalogTests` and `ToneTraceProcessorStateTests`,
+which check the exposed controls and the structural controls that remain excluded.
+No separate macOS parameter implementation or accessibility rewrite is required.
+
+For manual verification on a Mac with VoiceOver:
+
+- In each available format, verify Maximum Correction, Strength, Range Low/High,
+  Q / Sharpness, and Full Correction Range appear in the host parameter interface.
+  In REAPER with OSARA, verify they can be reached and adjusted through its effects
+  parameter interface as well as through the plug-in editor.
+- Confirm the editor retains its spoken control names, roles, values, keyboard
+  focus order, page/band navigation, and status announcements. Check adjustment
+  and exact-value entry, then close and reopen the editor and restore a project.
+- With a learned correction, adjust the restored controls during playback and
+  verify that the correction updates without restarting capture. These changes
+  use background rebuilds and are not sample-accurate; let static settings settle
+  before offline rendering.
+- Confirm Match Mode, Resolution, and Workflow Step remain outside host automation
+  while their existing editor controls remain accessible with VoiceOver.
+
+Passing automated tests or AU validation does not establish VoiceOver behavior;
+record the macOS version, host, format, and manual results before claiming it was
+verified on a Mac. Preserve the existing accessibility handlers and keyboard
+behavior when making follow-up changes.
+
 ## Linux verification
 
 Linux intentionally verifies the portable engine/tool layer only. It does not
@@ -89,8 +118,8 @@ shared runners. Unsupported-feature skips are reported. Validation is serial.
 To run the same checks against a local staged package, use PowerShell:
 
 ```powershell
-./tools/validate_windows_package.ps1 -Validator pluginval -StageDirectory dist/ToneTrace_EQ_1.2.0_Windows_x64
-./tools/validate_windows_package.ps1 -Validator clap-validator -StageDirectory dist/ToneTrace_EQ_1.2.0_Windows_x64
+./tools/validate_windows_package.ps1 -Validator pluginval -StageDirectory dist/ToneTrace_EQ_1.3.0_Windows_x64
+./tools/validate_windows_package.ps1 -Validator clap-validator -StageDirectory dist/ToneTrace_EQ_1.3.0_Windows_x64
 ```
 
 Complete real-host listening, project save/reload, duplicate/moved instance checks,

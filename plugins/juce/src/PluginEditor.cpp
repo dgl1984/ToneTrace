@@ -224,7 +224,7 @@ ToneTraceEditor::ToneTraceEditor(ToneTraceProcessor& processor)
       processor_(processor),
       pageSelector_(*this),
       captureReferenceButton_(
-          "Capture Reference",
+          "Learn Reference",
           "Start or restart Reference capture. Only accepted audio counts toward Capture Time."),
       learnTargetButton_(
           "Learn Target",
@@ -247,10 +247,10 @@ ToneTraceEditor::ToneTraceEditor(ToneTraceProcessor& processor)
     // nested focus-container experiment, no startup focus grab, no REAPER wrapper
     // manipulation, and direct interactive children.
     setAccessible(true);
-    setTitle("Tone Trace 1.2");
+    setTitle("Tone Trace 1.3");
     setDescription("Tone Trace EQ. Capture, correction, band editing, curve inspection, import and export.");
 
-    heading_.setText("Tone Trace 1.2", juce::dontSendNotification);
+    heading_.setText("Tone Trace 1.3", juce::dontSendNotification);
     heading_.setFont(type::title());
     heading_.setColour(juce::Label::textColourId, colour::text);
     heading_.setJustificationType(juce::Justification::centredLeft);
