@@ -14,9 +14,9 @@ Match Mode, Resolution, and Workflow Step remain non-automatable because they ch
 
 **Capture Reference** is now **Learn Reference**, matching **Learn Target**. The button's spoken label and the host's workflow label use the same wording. Its behavior is unchanged.
 
-## macOS status — untested update
+## macOS support
 
-This update uses Victor Tsaran's macOS port as its base for AU, VST3, and CLAP support. His VoiceOver accessibility implementation is retained, with the Reference button wording updated as described above. This version has **not been tested on a Mac**, including with VoiceOver; testing of the original port does not verify this update.
+This update uses Victor Tsaran's macOS port as its base for AU, VST3, and CLAP support. His VoiceOver accessibility implementation is retained, with the Reference button wording updated as described above. The 1.3.0 Mac build has now been tested by a user, who reports that it works correctly.
 
 ## Windows installation
 
