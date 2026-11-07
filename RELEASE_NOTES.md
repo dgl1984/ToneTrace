@@ -16,7 +16,7 @@ Match Mode, Resolution, and Workflow Step remain non-automatable because they ch
 
 ## macOS support
 
-This update uses Victor Tsaran's macOS port as its base for AU, VST3, and CLAP support. His VoiceOver accessibility implementation is retained, with the Reference button wording updated as described above. The 1.3.0 Mac build has now been tested by a user, who reports that it works correctly.
+This update uses Victor Tsaran's macOS port as its base for AU, VST3, and CLAP support. His VoiceOver accessibility implementation is retained, with the Reference button wording updated as described above.
 
 ## Windows installation
 

@@ -8,7 +8,7 @@ Changes to Tone Trace EQ, with the newest first.
 
 - Restored host automation and REAPER/OSARA exposure for Maximum Correction, Strength, frequency range, Q / Sharpness, and Full Correction Range. Background correction updates remain asynchronous.
 - Match Mode, Resolution, and Workflow Step remain excluded from automation.
-- Preserved Victor Tsaran's macOS port and VoiceOver implementation as the base. A user has tested the 1.3.0 Mac build and reports that it works correctly.
+- Preserved Victor Tsaran's macOS port and VoiceOver implementation as the base.
 - Added shared parameter-exposure regression coverage and a macOS VoiceOver verification checklist.
 
 ## [1.2]
